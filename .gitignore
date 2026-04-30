@@ -1,0 +1,29 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local tool/editor state
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+# Runtime outputs and generated customer artifacts
+logs/
+handoffs/
+dashboards/
+
+# Local lock/runtime files
+*.log
+*.pid
