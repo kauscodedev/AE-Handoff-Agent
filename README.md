@@ -1,6 +1,6 @@
 # AE Handoff Brief Agent
 
-Standalone 9-stage multi-agent pipeline that watches HubSpot for "C - Meeting Scheduled" calls, transcribes and analyzes them through the full BANTIC framework, and generates data-driven Markdown handoff briefs plus HTML dashboards for Account Executives.
+Standalone 9-stage multi-agent pipeline that watches HubSpot for new "C - Meeting Scheduled" calls, fetches the full company or trigger-call context, transcribes and analyzes the relevant call set through the BANTIC framework, and generates Markdown handoff briefs plus HTML dashboards for Account Executives.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ Standalone 9-stage multi-agent pipeline that watches HubSpot for "C - Meeting Sc
 HubSpot API
    ↓ (searches HubSpot for C - Meeting Scheduled call activities)
 Stage 1: HubSpot Watcher
-   ↓ (fetches company + contacts + all associated calls)
+   ↓ (fetches HubSpot company + contacts + relevant associated calls)
 Stage 2: Fetch Agent
    ↓ (submits recording to Deepgram Nova-3)
 Stage 3: Transcription Agent
@@ -29,6 +29,7 @@ Stage 7: AE Brief Agent
    ↓
 Markdown brief saved to handoffs/<Company>_handoff.md
 HTML dashboard saved to dashboards/<Company>_dashboard.html
+Run + call state saved to ae_handoff_runs / ae_handoff_run_calls
 ```
 
 ## Setup
@@ -104,12 +105,34 @@ Mike mentioned "photos are taking too long" and "our process is slow."
 Ask about budget allocation for photo improvement. Clarify who approves the solution.
 ```
 
+## Current Process
+
+1. `stages/watcher.py` polls HubSpot for new `C - Meeting Scheduled` calls since the last watcher timestamp in `.watcher_state.json`.
+2. The watcher filters out trigger calls already marked `ae_brief_sent = True` in Supabase.
+3. If the trigger call has a company association, Stage 2 fetches:
+   - company details
+   - all associated HubSpot contacts
+   - all associated HubSpot calls
+4. Stage 2 narrows the analysis call set to:
+   - `C - Meeting Scheduled`
+   - `C - Callback High Intent`
+   - `C - Callback Low Intent`
+   - `C - Gave a Referral`
+   - `Connected`
+5. If the trigger call has no associated company, the pipeline falls back to an `INDIVIDUAL` trigger-call-only run instead of skipping it.
+6. Deepgram transcribes recordings, OpenAI cleans speaker labels, NVIDIA judges labels and BANTIC, Python computes the weighted score, and OpenAI writes the final handoff brief.
+7. Supabase stores both the trigger-level run record and per-call processing state in `ae_handoff_runs` and `ae_handoff_run_calls`.
+8. For company-backed runs, the final brief is written back to the HubSpot company property. For `INDIVIDUAL` runs, that HubSpot company update is skipped.
+
 ## Key Features
 
 - **Quality Gate**: Only generates briefs when BANTIC analysis exists (no hallucinated content)
 - **Evidence-Based**: Every claim cites verbatim transcript quotes
 - **No LLM Hallucination in Scoring**: Uses Python to calculate weighted scores
 - **Multi-Call Intelligence**: Finds best evidence across all company calls
+- **Incremental Watcher**: Only fetches HubSpot Meeting Scheduled calls newer than the last watcher run
+- **No-Company Fallback**: Trigger calls without a company can still generate an `INDIVIDUAL` handoff
+- **Run Tracking**: Stores run-level and call-level pipeline state in `ae_handoff_runs` and `ae_handoff_run_calls`
 - **Standalone**: Separate from call-scoring-agent; uses same API keys
 
 ## File Structure
@@ -118,8 +141,8 @@ Ask about budget allocation for photo improvement. Clarify who approves the solu
 ae-handoff-brief-agent/
 ├── orchestrator.py              ← main loop: 9-stage pipeline
 ├── stages/
-│   ├── watcher.py              ← Stage 1: searches HubSpot for Meeting Scheduled calls
-│   ├── fetch_agent.py          ← Stage 2: company + contacts + calls
+│   ├── watcher.py              ← Stage 1: incremental HubSpot watcher
+│   ├── fetch_agent.py          ← Stage 2: HubSpot company/contact/call fetch
 │   ├── transcription.py        ← Stage 3: Deepgram submission
 │   ├── clean_transcript.py     ← Stage 4: speaker labeling
 │   ├── transcript_judge.py     ← Stage 4.1: speaker-label judge
@@ -147,7 +170,11 @@ Requires these columns in `calls` table (from call-scoring-agent):
 - `analysis_status` should accept `completed`
 - All BANTIC evidence columns (budget_evidence, authority_evidence, etc.)
 
-The current `contacts` table may not have a `name` column. `upsert_contact()` already strips `is_dm`, but contact upserts will still fail until the Supabase contacts schema matches the fields written by Stage 2 (`hubspot_contact_id`, `hubspot_company_id`, `name`, `title`, `email`).
+The pipeline also expects:
+- `ae_handoff_runs` — one row per trigger-call handoff run
+- `ae_handoff_run_calls` — one row per in-scope analyzed call inside that run
+
+HubSpot is the runtime source of truth for company and contact fetches. Supabase is used for persistence, transcript reuse, analysis state, idempotency, and run tracking.
 
 ## Monitoring
 
@@ -158,8 +185,8 @@ tail -f logs/orchestrator.log
 ```
 
 Look for:
-- `✓ Stage 1: Watcher found X pending calls`
-- `✓ Stage 2: Fetch complete: X contacts, Y calls`
+- `✓ Watcher found X NEW Meeting Scheduled calls in HubSpot since last run`
+- `✓ Stage 2 complete: <company> with X connected calls tracked`
 - `✓ Stage 4.1 complete: X approved, Y revised`
 - `✓ Stage 5: BANTIC analysis for 5 calls`
 - `✓ Stage 5.5 complete: X approved, Y revised`
@@ -172,24 +199,23 @@ Look for:
 - **OpenAI cost**: ~$0.002-0.005 per call for all stages combined
 - **Timestamps**: HubSpot `hs_timestamp` is milliseconds; code divides by 1000
 - **API reuse**: Uses same credentials as call-scoring-agent (no new accounts needed)
-- **Stage 1 source of truth**: HubSpot is searched directly; Supabase is only used for the `ae_brief_sent` idempotency check at this stage
+- **Stage 1 source of truth**: HubSpot is searched directly; Supabase is used for the `ae_brief_sent` idempotency check and run/call persistence
+- **Stage 2 call filter**: only `Meeting Scheduled`, `Callback High Intent`, `Callback Low Intent`, `Gave a Referral`, and `Connected` calls are included for transcription/analysis
+- **Watcher state**: `.watcher_state.json` stores the last watcher timestamp in UTC milliseconds
 - **NVIDIA judge calls**: Stage 4.1 and Stage 5.5 use 90-second request timeouts and continue on judge errors where possible
 
 ## Troubleshooting
 
 ### "No pending calls found"
 - Check that calls in HubSpot have `hs_call_disposition` = "C - Meeting Scheduled"
-- Verify the call has an associated company in HubSpot
 - Verify `ae_brief_sent` is not already True for those call IDs in Supabase
+- Check `.watcher_state.json` if you expect an older trigger call to be re-picked
 - Check HubSpot API token is valid
 
 ### "Fetch failed"
-- Ensure call has associated company_id in HubSpot
+- Ensure the trigger call exists in HubSpot
+- If the trigger has no company, verify the `INDIVIDUAL` fallback path is being used
 - Check HUBSPOT_TOKEN is set correctly
-
-### "Error upserting contact"
-- Check whether the Supabase `contacts` table has `name`, `title`, and `email` columns
-- The pipeline can continue using in-memory HubSpot contacts, but contact persistence will fail until the schema is aligned
 
 ### "Deepgram error"
 - Verify DEEPGRAM_API_KEY is correct

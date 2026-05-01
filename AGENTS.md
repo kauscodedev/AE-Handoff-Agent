@@ -41,8 +41,8 @@ Each stage is a module in `stages/`. They execute sequentially per company; Stag
 
 | Stage | File | What it does |
 |---|---|---|
-| 1 | `stages/watcher.py` | Searches HubSpot directly for recent "C - Meeting Scheduled" calls, including activity date, assigned owner, call outcome, recording URL, and associated company; skips calls already marked briefed in Supabase |
-| 2 | `stages/fetch_agent.py` | Fetches company/contact/call data from HubSpot; filters for "C - " or "Connected" disposition calls only; upserts to Supabase |
+| 1 | `stages/watcher.py` | Searches HubSpot directly for new "C - Meeting Scheduled" calls since the last watcher run, including activity date, assigned owner, call outcome, recording URL, and associated company; if no company exists, falls back to `INDIVIDUAL`; skips trigger calls already briefed in Supabase |
+| 2 | `stages/fetch_agent.py` | Fetches company/contact/call data from HubSpot; narrows analysis calls to `C - Meeting Scheduled`, `C - Callback High Intent`, `C - Callback Low Intent`, `C - Gave a Referral`, and `Connected`; merges in stored transcript/analysis state from Supabase |
 | 3 | `stages/transcription.py` | Submits recording URL to Deepgram Nova-3 (synchronous STT + diarization via REST API) |
 | 4 | `stages/clean_transcript.py` | gpt-4o-mini relabels Speaker 0/1 → `[SDR]`/`[PROSPECT]`/`[VOICEMAIL/IVR]`/`[RECEPTIONIST]` |
 | 4.1 | `stages/transcript_judge.py` | GLM-4.7 with thinking verifies speaker labels are correct; catches global swaps ([SDR]↔[PROSPECT]) and individual turn mismatches; logs verdict + corrections to `logs/transcript_judge_feedback.jsonl` |
@@ -56,17 +56,23 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 
 ## Key Behaviours to Know
 
-- **Idempotent**: the `ae_brief_sent` flag in Supabase prevents re-processing. Use `scratch/reset_flags.py` to re-run.
+- **Idempotent**: the `ae_brief_sent` flag in Supabase prevents re-processing of trigger calls. Use `scratch/reset_flags.py` to re-run.
+- **Watcher state**: Stage 1 stores the last successful watcher timestamp in `.watcher_state.json` and only fetches newer HubSpot Meeting Scheduled calls.
 - **Transcript reuse**: if `raw_transcript` already exists in the Supabase row, Stage 3 is skipped.
+- **HubSpot is fetch source of truth**: company details, contacts, trigger calls, and associated call history are fetched from HubSpot at runtime.
+- **Supabase is storage**: Supabase is used for transcript reuse, analysis state, idempotency, and `ae_handoff_runs` / `ae_handoff_run_calls` persistence.
 - **Best score wins**: Stage 6 takes the highest per-dimension score across all calls for a company, not the average.
 - **Score formula** (Stage 6, `score_module.py`): `(B×5 + A×20 + N×25 + T×15 + I×15 + CP×20) / 30`. Tier mapping: ≥8.1 = "Very High Intent", 8.0 = "High Intent", 5.0–7.9 = "Qualified", <5.0 = "Disqualified".
 - **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stages 4.1 and 5.5 use GLM-4.7 via NVIDIA API (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
 - **PID lockfile**: orchestrator writes `/tmp/ae_handoff_orchestrator.lock` on startup to prevent duplicate instances.
-- **Watcher time window**: Stage 1 searches HubSpot calls with `hs_timestamp >= start of yesterday`; older calls are not picked up even with `ae_brief_sent = False`.
+- **Watcher time window**: Stage 1 searches HubSpot calls with `hs_timestamp >= last watcher timestamp`; if there is no watcher state yet, it falls back to the start of yesterday.
+- **Allowed analysis call set**: Stage 2 only includes `Meeting Scheduled`, `Callback High Intent`, `Callback Low Intent`, `Gave a Referral`, and `Connected` calls, and only up to the trigger call date.
+- **No-company trigger fallback**: if a Meeting Scheduled trigger has no associated company, Stage 2 builds a trigger-call-only `INDIVIDUAL` journey instead of dropping the call.
 - **DM confidence gating**: Stage 4.5 only updates `dm_contact` if confidence is `"high"` or `"medium"`; low-confidence results fall back to `contacts[0]`.
-- **`upsert_contact` schema gap**: `supabase_client.upsert_contact()` strips the `is_dm` field before upserting because the Supabase schema may not have that column yet. Live runs also showed the `contacts` table may be missing `name`; contact persistence can fail until the schema includes `hubspot_contact_id`, `hubspot_company_id`, `name`, `title`, and `email`.
+- **Contact persistence is not runtime-critical**: the pipeline uses HubSpot contacts in memory during the run; the old Supabase `contacts` table is not the runtime source of truth.
 - **BANTIC analysis status**: Stage 5 writes `analysis_status = "completed"`; Supabase rejects `"complete"` via `calls_analysis_status_check`.
 - **NVIDIA judge timeouts**: Stages 4.1 and 5.5 set 90-second request timeouts; judge failures should log and allow the pipeline to continue where possible.
+- **Run tracking**: the orchestrator creates one `ae_handoff_runs` row per trigger and one `ae_handoff_run_calls` row per in-scope call, then updates them through each stage.
 - **Testing reality**: There is no formal automated test suite. `test_judge.py` and `test_transcript_judge.py` are judge smoke scripts, while `scratch/test_supabase.py` is a manual connectivity probe.
 - **Transcript judge** (Stage 4.1): Uses GLM-4.7 via NVIDIA API to verify speaker labels ([SDR]/[PROSPECT]) are correct; catches global swaps and individual turn mismatches
 - **Transcript corrections applied programmatically**: Stage 4.1 never rewrites dialogue content — only corrects labels via deterministic string replacement (prevents hallucination)
@@ -80,3 +86,4 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - `handoffs/<Company>_handoff.md` — Markdown brief (5 sections: ICP Fit, Current Process, Evaluating Tools, Pain/Need, Next Steps). Note: Path is hardcoded to `/Users/kaustubhchauhan/ae-handoff-brief-agent/handoffs/` in `ae_brief_agent.py`.
 - `dashboards/<Company>_dashboard.html` — Standalone dark-theme HTML dashboard (self-contained; auto-created relative to project root).
 - `logs/orchestrator.log` — Structured log output.
+- `ae_handoff_runs` / `ae_handoff_run_calls` — Supabase run tracking tables for trigger-level and call-level pipeline state.

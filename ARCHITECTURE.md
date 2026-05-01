@@ -9,10 +9,10 @@ The AE Handoff Brief Agent is a standalone 9-stage multi-agent pipeline that tra
 ### Stage 1: HubSpot Watcher
 **File**: `stages/watcher.py`
 
-**Purpose**: Continuously searches HubSpot directly for recent calls with the "C - Meeting Scheduled" disposition, then filters out calls already briefed in Supabase.
+**Purpose**: Continuously searches HubSpot directly for new calls with the "C - Meeting Scheduled" disposition, then filters out calls already briefed in Supabase.
 
 **Input**: 
-- HubSpot API query: calls where `hs_call_disposition = "C - Meeting Scheduled"` and `hs_timestamp` is within the watcher window
+- HubSpot API query: calls where `hs_call_disposition = "C - Meeting Scheduled"` and `hs_timestamp >= last watcher timestamp`
 - Supabase idempotency check: skip call IDs where `ae_brief_sent = True`
 
 **Output**:
@@ -23,39 +23,49 @@ The AE Handoff Brief Agent is a standalone 9-stage multi-agent pipeline that tra
 **Cost**: Free (HubSpot API)
 
 **Important behavior**:
-- Calls without an associated HubSpot company are skipped because Stage 2 needs `hubspot_company_id`.
-- The watcher window starts at the beginning of yesterday. Older calls are not picked up unless the search window is changed.
+- The watcher stores its last successful UTC timestamp in `.watcher_state.json`.
+- If no watcher state exists yet, the first search falls back to the beginning of yesterday.
+- Calls without an associated HubSpot company are not skipped anymore; they are marked as `INDIVIDUAL` so Stage 2 can run a trigger-call-only fallback path.
 
 ---
 
 ### Stage 2: Fetch Agent
 **File**: `stages/fetch_agent.py`
 
-**Purpose**: Gathers complete company context from HubSpot and persists connected call/contact metadata to Supabase.
+**Purpose**: Gathers complete company context from HubSpot and persists/merges the in-scope call state with Supabase.
 
 **Input**: 
-- `company_id` from Stage 1 trigger call
+- `company_id` from Stage 1 trigger call, or `INDIVIDUAL` for no-company trigger fallback
 
 **Fetches**:
 - Company details: name, headcount, location
 - All contacts at company: name, title, email
 - All HubSpot calls associated with the company
-- Connected call details: activity date, owner, outcome, recording URL
-- Existing call rows are upserted to Supabase for transcript and BANTIC persistence
+- In-scope call details: activity date, owner, outcome, recording URL
+- Existing call rows are merged from Supabase for transcript reuse and analysis-state continuity
 
 **Output**:
 - `CompanyJourney` object with:
   - `company`: Company details
   - `contacts`: List of Contact objects
-  - `calls`: List of all calls with BANTIC scores
+  - `calls`: List of in-scope call dicts for the trigger run
   - `dm_contact`: Identified decision maker (if any)
 
 **Cost**: ~$0.0005 (HubSpot API calls)
 
-**Error Handling**: 
+**Error Handling**:
 - Returns None if company not found
-- Returns empty journey if no calls found
-- Contact upsert can fail if the Supabase `contacts` table lacks expected columns such as `name`; the pipeline still keeps contacts in memory for the current run.
+- Returns empty journey if no eligible calls are found
+- If `company_id == "INDIVIDUAL"`, builds a single-call fallback journey from the trigger call only
+
+**Call filter**:
+- `C - Meeting Scheduled`
+- `C - Callback High Intent`
+- `C - Callback Low Intent`
+- `C - Gave a Referral`
+- `Connected`
+
+Only calls up to the trigger call date are included, so later activity does not leak into the handoff.
 
 ---
 
@@ -136,7 +146,7 @@ The AE Handoff Brief Agent is a standalone 9-stage multi-agent pipeline that tra
 
 **Model**: `z-ai/glm4.7` via `https://integrate.api.nvidia.com/v1`
 
-**Timeout**: 90 seconds per request
+**Timeout**: 30 seconds per request in the current code path
 
 **Safety Principle**: Corrections are applied programmatically to labels only. Stage 4.1 never rewrites dialogue content.
 
@@ -218,7 +228,7 @@ The AE Handoff Brief Agent is a standalone 9-stage multi-agent pipeline that tra
 
 **Model**: `z-ai/glm4.7` via `https://integrate.api.nvidia.com/v1`
 
-**Timeout**: 90 seconds per request
+**Timeout**: 30 seconds per request in the current code path
 
 **Principle**: Non-overcritical review. The judge should not nitpick borderline calls.
 
@@ -254,6 +264,26 @@ The AE Handoff Brief Agent is a standalone 9-stage multi-agent pipeline that tra
 **Cost**: $0 (Python only)
 
 **Design Principle**: Avoids LLM hallucination in math by using native Python calculation.
+
+---
+
+### Run Tracking
+**Files**: `orchestrator.py`, `lib/supabase_client.py`
+
+**Purpose**: Persist the end-to-end state of each handoff run and each in-scope call.
+
+**Tables**:
+- `ae_handoff_runs`: one row per trigger-call handoff run
+- `ae_handoff_run_calls`: one row per analyzed call inside that run
+
+**Stored state includes**:
+- trigger call metadata
+- company/contact snapshot
+- transcription status
+- analysis status
+- transcript judge / final judge verdicts
+- final weighted score and qualification tier
+- saved brief and dashboard paths
 
 ---
 
