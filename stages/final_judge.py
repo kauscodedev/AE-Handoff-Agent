@@ -145,7 +145,8 @@ def _judge_call(call: Call, score: BANTICScore) -> Dict[str, Any]:
             temperature=0,
             max_tokens=4096,
             response_format={"type": "json_object"},
-            extra_body={"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}}
+            extra_body={"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}},
+            timeout=90,
         )
 
         # Parse response

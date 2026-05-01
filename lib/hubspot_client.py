@@ -1,6 +1,7 @@
 import os
 import logging
 import requests
+from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 from .types import Company, Contact
 
@@ -36,6 +37,119 @@ def get_disposition_mapping() -> Dict[str, str]:
     except Exception as e:
         logger.warning(f"Could not fetch disposition mapping: {e}")
         return {}
+
+def get_disposition_id_by_label(label: str) -> Optional[str]:
+    """Find a HubSpot call disposition ID by its display label."""
+    mapping = get_disposition_mapping()
+    for disposition_id, disposition_label in mapping.items():
+        if disposition_label == label:
+            return disposition_id
+    return None
+
+def get_call_company_id(call_id: str) -> Optional[str]:
+    """Fetch the first company associated with a HubSpot call."""
+    try:
+        url = f"{HUBSPOT_API_URL}/crm/v3/objects/calls/{call_id}/associations/companies"
+        response = requests.get(url, headers=get_headers())
+        response.raise_for_status()
+        results = response.json().get("results", [])
+        if not results:
+            return None
+        return results[0].get("id")
+    except Exception as e:
+        logger.error(f"Error fetching company association for call {call_id}: {e}")
+        return None
+
+def _format_call_details(call_id: str, props: Dict[str, Any], company_id: Optional[str] = None) -> Dict[str, Any]:
+    """Normalize HubSpot call properties into the pipeline's call shape."""
+    disp_id = props.get("hs_call_disposition")
+    mapping = get_disposition_mapping()
+    disp_label = mapping.get(disp_id) if disp_id else None
+    owner_id = props.get("hubspot_owner_id")
+    owner_name = get_owner_name(owner_id) if owner_id else None
+
+    return {
+        "hubspot_call_id": call_id,
+        "hubspot_company_id": company_id,
+        "call_date": props.get("hs_timestamp"),
+        "activity_date": props.get("hs_timestamp"),
+        "assigned_to": owner_name,
+        "owner_name": owner_name,
+        "call_outcome": disp_label,
+        "call_disposition_label": disp_label,
+        "recording_url": props.get("hs_call_recording_url"),
+    }
+
+def search_meeting_scheduled_calls(limit: int = 10, days_back: int = 1) -> List[Dict[str, Any]]:
+    """
+    Search HubSpot calls directly for recent "C - Meeting Scheduled" outcomes.
+
+    Returns call records with activity date, assigned owner, outcome, recording URL,
+    and associated company ID so the orchestrator can hand off to Stage 2.
+    """
+    disposition_id = get_disposition_id_by_label("C - Meeting Scheduled")
+    if not disposition_id:
+        logger.error("Could not find HubSpot disposition ID for 'C - Meeting Scheduled'")
+        return []
+
+    try:
+        since = (datetime.now() - timedelta(days=days_back)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        since_ms = int(since.timestamp() * 1000)
+        url = f"{HUBSPOT_API_URL}/crm/v3/objects/calls/search"
+        payload = {
+            "filterGroups": [
+                {
+                    "filters": [
+                        {
+                            "propertyName": "hs_call_disposition",
+                            "operator": "EQ",
+                            "value": disposition_id,
+                        },
+                        {
+                            "propertyName": "hs_timestamp",
+                            "operator": "GTE",
+                            "value": str(since_ms),
+                        },
+                    ]
+                }
+            ],
+            "properties": [
+                "hs_timestamp",
+                "hubspot_owner_id",
+                "hs_call_title",
+                "hs_call_disposition",
+                "hs_call_recording_url",
+            ],
+            "sorts": [
+                {
+                    "propertyName": "hs_timestamp",
+                    "direction": "DESCENDING",
+                }
+            ],
+            "limit": min(limit, 100),
+        }
+        response = requests.post(url, headers=get_headers(), json=payload)
+        response.raise_for_status()
+
+        calls = []
+        for item in response.json().get("results", []):
+            call_id = item.get("id")
+            if not call_id:
+                continue
+
+            company_id = get_call_company_id(call_id)
+            if not company_id:
+                logger.warning(f"Skipping Meeting Scheduled call {call_id}: no associated company")
+                continue
+
+            calls.append(_format_call_details(call_id, item.get("properties", {}), company_id))
+
+        return calls
+    except Exception as e:
+        logger.error(f"Error searching HubSpot Meeting Scheduled calls: {e}")
+        return []
 
 def get_company(company_id: str) -> Optional[Company]:
     """Fetch company details from HubSpot."""
@@ -124,21 +238,7 @@ def get_call_details(call_id: str, company_id: Optional[str] = None) -> Optional
         response = requests.get(url, headers=get_headers(), params=params)
         response.raise_for_status()
         data = response.json()
-        props = data.get("properties", {})
-        
-        # Map disposition ID to label
-        disp_id = props.get("hs_call_disposition")
-        mapping = get_disposition_mapping()
-        disp_label = mapping.get(disp_id) if disp_id else None
-
-        return {
-            "hubspot_call_id": call_id,
-            "hubspot_company_id": company_id,
-            "call_date": props.get("hs_timestamp"),
-            "call_disposition_label": disp_label,
-            "recording_url": props.get("hs_call_recording_url"),
-            "owner_name": get_owner_name(props.get("hubspot_owner_id")) if props.get("hubspot_owner_id") else None
-        }
+        return _format_call_details(call_id, data.get("properties", {}), company_id)
     except Exception as e:
         logger.error(f"Error fetching call {call_id}: {e}")
         return None

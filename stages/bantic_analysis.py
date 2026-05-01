@@ -129,7 +129,7 @@ def analyze_calls(calls: list) -> list:
                         "current_process_info_captured": score.current_process_info_captured,
                         "overall_summary": score.overall_summary,
                         "sdr_coaching_note": score.sdr_coaching_note,
-                        "analysis_status": "complete"
+                        "analysis_status": "completed"
                     })
                     analyzed.append((call, score))
             except Exception as e:

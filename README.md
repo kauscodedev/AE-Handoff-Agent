@@ -6,7 +6,7 @@ Standalone 7-stage multi-agent pipeline that watches HubSpot for "C - Meeting Sc
 
 ```
 HubSpot API
-   ↓ (polls for C - Meeting Scheduled calls)
+   ↓ (searches HubSpot for C - Meeting Scheduled call activities)
 Stage 1: HubSpot Watcher
    ↓ (fetches company + contacts + all associated calls)
 Stage 2: Fetch Agent
@@ -110,7 +110,7 @@ Ask about budget allocation for photo improvement. Clarify who approves the solu
 ae-handoff-brief-agent/
 ├── orchestrator.py              ← main loop: 7-stage pipeline
 ├── stages/
-│   ├── watcher.py              ← Stage 1: polls HubSpot
+│   ├── watcher.py              ← Stage 1: searches HubSpot for Meeting Scheduled calls
 │   ├── fetch_agent.py          ← Stage 2: company + contacts + calls
 │   ├── transcription.py        ← Stage 3: Deepgram submission
 │   ├── clean_transcript.py     ← Stage 4: speaker labeling
@@ -161,7 +161,8 @@ Look for:
 
 ### "No pending calls found"
 - Check that calls in HubSpot have `hs_call_disposition` = "C - Meeting Scheduled"
-- Verify `ae_brief_sent` is False for those calls in Supabase
+- Verify the call has an associated company in HubSpot
+- Verify `ae_brief_sent` is not already True for those call IDs in Supabase
 - Check HubSpot API token is valid
 
 ### "Fetch failed"

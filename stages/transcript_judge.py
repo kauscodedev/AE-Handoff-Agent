@@ -119,7 +119,8 @@ Verify the speaker-to-role mapping is correct. Look for:
             temperature=0,
             max_tokens=2048,
             response_format={"type": "json_object"},
-            extra_body={"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}}
+            extra_body={"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}},
+            timeout=90,
         )
 
         response_content = completion.choices[0].message.content

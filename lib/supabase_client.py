@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
+from typing import Set
 from supabase import create_client
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,23 @@ def get_meeting_scheduled_calls(limit: int = 20) -> list:
     except Exception as e:
         logger.error(f"Error fetching Meeting Scheduled calls: {e}")
         return []
+
+def get_sent_handoff_call_ids(call_ids: list) -> Set[str]:
+    """Return call IDs already marked as handoff sent in Supabase."""
+    if not call_ids:
+        return set()
+
+    try:
+        supabase = get_supabase()
+        response = supabase.table("calls").select(
+            "hubspot_call_id"
+        ).in_("hubspot_call_id", call_ids)\
+         .eq("ae_brief_sent", True)\
+         .execute()
+        return {row["hubspot_call_id"] for row in response.data}
+    except Exception as e:
+        logger.error(f"Error checking sent handoff call IDs: {e}")
+        return set()
 
 def upsert_call(call_data: dict) -> bool:
     """Upsert call data into Supabase."""

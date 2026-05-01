@@ -41,7 +41,7 @@ Each stage is a module in `stages/`. They execute sequentially per company; Stag
 
 | Stage | File | What it does |
 |---|---|---|
-| 1 | `stages/watcher.py` | Queries Supabase for unprocessed "C - Meeting Scheduled" calls from the last 24h |
+| 1 | `stages/watcher.py` | Searches HubSpot directly for recent "C - Meeting Scheduled" calls, including activity date, assigned owner, call outcome, recording URL, and associated company; skips calls already marked briefed in Supabase |
 | 2 | `stages/fetch_agent.py` | Fetches company/contact/call data from HubSpot; filters for "C - " or "Connected" disposition calls only; upserts to Supabase |
 | 3 | `stages/transcription.py` | Submits recording URL to Deepgram Nova-3 (synchronous STT + diarization via REST API) |
 | 4 | `stages/clean_transcript.py` | gpt-4o-mini relabels Speaker 0/1 → `[SDR]`/`[PROSPECT]`/`[VOICEMAIL/IVR]`/`[RECEPTIONIST]` |
@@ -62,7 +62,7 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **Score formula** (Stage 6, `score_module.py`): `(B×5 + A×20 + N×25 + T×15 + I×15 + CP×20) / 30`. Tier mapping: ≥8.1 = "Very High Intent", 8.0 = "High Intent", 5.0–7.9 = "Qualified", <5.0 = "Disqualified".
 - **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stages 4.1 and 5.5 use GLM-4.7 via NVIDIA API (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
 - **PID lockfile**: orchestrator writes `/tmp/ae_handoff_orchestrator.lock` on startup to prevent duplicate instances.
-- **Watcher time window**: Stage 1 only picks up calls with `call_date >= start of yesterday`; rows older than ~2 days are never processed even with `ae_brief_sent = False`.
+- **Watcher time window**: Stage 1 searches HubSpot calls with `hs_timestamp >= start of yesterday`; older calls are not picked up even with `ae_brief_sent = False`.
 - **DM confidence gating**: Stage 4.5 only updates `dm_contact` if confidence is `"high"` or `"medium"`; low-confidence results fall back to `contacts[0]`.
 - **`upsert_contact` schema gap**: `supabase_client.upsert_contact()` strips the `is_dm` field before upserting because the Supabase schema may not have that column yet.
 - **No tests**: There are no test files in the project. `scratch/test_supabase.py` is a manual connectivity probe only.

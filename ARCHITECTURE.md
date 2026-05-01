@@ -12,10 +12,11 @@ The AE Handoff Brief Agent is a standalone 7-stage multi-agent pipeline that tra
 **Purpose**: Continuously polls HubSpot for new calls with "C - Meeting Scheduled" disposition that haven't been briefed yet.
 
 **Input**: 
-- HubSpot API query: calls where `hs_call_disposition = "C - Meeting Scheduled"` AND `ae_brief_sent = False`
+- HubSpot API query: calls where `hs_call_disposition = "C - Meeting Scheduled"` and `hs_timestamp` is within the watcher window
+- Supabase idempotency check: skip call IDs where `ae_brief_sent = True`
 
 **Output**:
-- List of pending call objects: `[{hubspot_call_id, hubspot_company_id, call_date}, ...]`
+- List of pending call objects: `[{hubspot_call_id, hubspot_company_id, call_date, activity_date, assigned_to, call_outcome, recording_url}, ...]`
 
 **Frequency**: Every 60 seconds (configurable)
 
