@@ -1,6 +1,6 @@
 # AE Handoff Brief Agent
 
-Standalone 7-stage multi-agent pipeline that watches HubSpot for "C - Meeting Scheduled" calls, transcribes and analyzes them through the full BANTIC framework, and generates data-driven handoff briefs for Account Executives.
+Standalone 9-stage multi-agent pipeline that watches HubSpot for "C - Meeting Scheduled" calls, transcribes and analyzes them through the full BANTIC framework, and generates data-driven Markdown handoff briefs plus HTML dashboards for Account Executives.
 
 ## Architecture
 
@@ -14,14 +14,21 @@ Stage 2: Fetch Agent
 Stage 3: Transcription Agent
    ↓ (labels speakers with OpenAI gpt-4o-mini)
 Stage 4: Clean Transcript Agent
+   ↓ (verifies speaker labels with GLM-4.7)
+Stage 4.1: Transcript Judge
+   ↓ (identifies the actual decision maker)
+Stage 4.5: DM Discovery Agent
    ↓ (scores on 6 BANTIC dimensions with OpenAI gpt-4o-mini)
 Stage 5: BANTIC Analysis Agent
+   ↓ (reviews and corrects clearly wrong scores with GLM-4.7)
+Stage 5.5: Final Judge
    ↓ (calculates weighted score with Python, no LLM)
 Stage 6: Score Module
    ↓ (generates formatted brief with OpenAI gpt-4o)
 Stage 7: AE Brief Agent
    ↓
 Markdown brief saved to handoffs/<Company>_handoff.md
+HTML dashboard saved to dashboards/<Company>_dashboard.html
 ```
 
 ## Setup
@@ -40,6 +47,7 @@ cp .env.example .env
 # SUPABASE_SERVICE_KEY=<your-key>
 # DEEPGRAM_API_KEY=<your-key>
 # OPENAI_API_KEY=<your-key>
+# NVIDIA_API_KEY=<your-key>
 
 # Create logs directory
 mkdir -p logs
@@ -108,13 +116,16 @@ Ask about budget allocation for photo improvement. Clarify who approves the solu
 
 ```
 ae-handoff-brief-agent/
-├── orchestrator.py              ← main loop: 7-stage pipeline
+├── orchestrator.py              ← main loop: 9-stage pipeline
 ├── stages/
 │   ├── watcher.py              ← Stage 1: searches HubSpot for Meeting Scheduled calls
 │   ├── fetch_agent.py          ← Stage 2: company + contacts + calls
 │   ├── transcription.py        ← Stage 3: Deepgram submission
 │   ├── clean_transcript.py     ← Stage 4: speaker labeling
+│   ├── transcript_judge.py     ← Stage 4.1: speaker-label judge
+│   ├── dm_discovery.py         ← Stage 4.5: decision-maker discovery
 │   ├── bantic_analysis.py      ← Stage 5: BANTIC scoring
+│   ├── final_judge.py          ← Stage 5.5: BANTIC score judge
 │   ├── score_module.py         ← Stage 6: weighted score calc
 │   └── ae_brief_agent.py       ← Stage 7: brief generation
 ├── lib/
@@ -133,7 +144,10 @@ ae-handoff-brief-agent/
 Requires these columns in `calls` table (from call-scoring-agent):
 - `ae_brief_sent` (boolean) — marks when brief has been generated
 - `ae_brief_generated_at` (timestamp) — when brief was created
+- `analysis_status` should accept `completed`
 - All BANTIC evidence columns (budget_evidence, authority_evidence, etc.)
+
+The current `contacts` table may not have a `name` column. `upsert_contact()` already strips `is_dm`, but contact upserts will still fail until the Supabase contacts schema matches the fields written by Stage 2 (`hubspot_contact_id`, `hubspot_company_id`, `name`, `title`, `email`).
 
 ## Monitoring
 
@@ -146,7 +160,9 @@ tail -f logs/orchestrator.log
 Look for:
 - `✓ Stage 1: Watcher found X pending calls`
 - `✓ Stage 2: Fetch complete: X contacts, Y calls`
+- `✓ Stage 4.1 complete: X approved, Y revised`
 - `✓ Stage 5: BANTIC analysis for 5 calls`
+- `✓ Stage 5.5 complete: X approved, Y revised`
 - `✓ Stage 6 complete: Overall Score X.X (Qualification Tier)`
 - `✓ Brief saved: handoffs/Company_handoff.md`
 
@@ -156,6 +172,8 @@ Look for:
 - **OpenAI cost**: ~$0.002-0.005 per call for all stages combined
 - **Timestamps**: HubSpot `hs_timestamp` is milliseconds; code divides by 1000
 - **API reuse**: Uses same credentials as call-scoring-agent (no new accounts needed)
+- **Stage 1 source of truth**: HubSpot is searched directly; Supabase is only used for the `ae_brief_sent` idempotency check at this stage
+- **NVIDIA judge calls**: Stage 4.1 and Stage 5.5 use 90-second request timeouts and continue on judge errors where possible
 
 ## Troubleshooting
 
@@ -168,6 +186,10 @@ Look for:
 ### "Fetch failed"
 - Ensure call has associated company_id in HubSpot
 - Check HUBSPOT_TOKEN is set correctly
+
+### "Error upserting contact"
+- Check whether the Supabase `contacts` table has `name`, `title`, and `email` columns
+- The pipeline can continue using in-memory HubSpot contacts, but contact persistence will fail until the schema is aligned
 
 ### "Deepgram error"
 - Verify DEEPGRAM_API_KEY is correct

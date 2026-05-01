@@ -2,14 +2,14 @@
 
 ## Overview
 
-The AE Handoff Brief Agent is a standalone 7-stage multi-agent pipeline that transforms raw call data into evidence-based Account Executive handoff briefs. It operates independently from call-scoring-agent but uses the same Supabase database for call analysis data.
+The AE Handoff Brief Agent is a standalone 9-stage multi-agent pipeline that transforms raw HubSpot call data into evidence-based Account Executive handoff briefs and HTML dashboards. It operates independently from call-scoring-agent but uses the same Supabase database for call persistence, transcripts, BANTIC data, and idempotency flags.
 
-## 7-Stage Pipeline
+## 9-Stage Pipeline
 
 ### Stage 1: HubSpot Watcher
 **File**: `stages/watcher.py`
 
-**Purpose**: Continuously polls HubSpot for new calls with "C - Meeting Scheduled" disposition that haven't been briefed yet.
+**Purpose**: Continuously searches HubSpot directly for recent calls with the "C - Meeting Scheduled" disposition, then filters out calls already briefed in Supabase.
 
 **Input**: 
 - HubSpot API query: calls where `hs_call_disposition = "C - Meeting Scheduled"` and `hs_timestamp` is within the watcher window
@@ -22,12 +22,16 @@ The AE Handoff Brief Agent is a standalone 7-stage multi-agent pipeline that tra
 
 **Cost**: Free (HubSpot API)
 
+**Important behavior**:
+- Calls without an associated HubSpot company are skipped because Stage 2 needs `hubspot_company_id`.
+- The watcher window starts at the beginning of yesterday. Older calls are not picked up unless the search window is changed.
+
 ---
 
 ### Stage 2: Fetch Agent
 **File**: `stages/fetch_agent.py`
 
-**Purpose**: Gathers complete company context by fetching from HubSpot and Supabase.
+**Purpose**: Gathers complete company context from HubSpot and persists connected call/contact metadata to Supabase.
 
 **Input**: 
 - `company_id` from Stage 1 trigger call
@@ -35,8 +39,9 @@ The AE Handoff Brief Agent is a standalone 7-stage multi-agent pipeline that tra
 **Fetches**:
 - Company details: name, headcount, location
 - All contacts at company: name, title, email
-- All calls for company from Supabase (with BANTIC analysis data)
-- Call recordings, transcripts, and scores
+- All HubSpot calls associated with the company
+- Connected call details: activity date, owner, outcome, recording URL
+- Existing call rows are upserted to Supabase for transcript and BANTIC persistence
 
 **Output**:
 - `CompanyJourney` object with:
@@ -50,6 +55,7 @@ The AE Handoff Brief Agent is a standalone 7-stage multi-agent pipeline that tra
 **Error Handling**: 
 - Returns None if company not found
 - Returns empty journey if no calls found
+- Contact upsert can fail if the Supabase `contacts` table lacks expected columns such as `name`; the pipeline still keeps contacts in memory for the current run.
 
 ---
 
@@ -109,6 +115,55 @@ The AE Handoff Brief Agent is a standalone 7-stage multi-agent pipeline that tra
 
 ---
 
+### Stage 4.1: Transcript Judge
+**File**: `stages/transcript_judge.py`
+
+**Purpose**: Uses GLM-4.7 through NVIDIA's API to verify that Stage 4 speaker labels are correct.
+
+**Input**:
+- Raw Deepgram transcript
+- Cleaned role-labeled transcript
+
+**Checks**:
+- Global SDR/prospect swaps
+- Individual mislabeled turns
+- Voicemail, IVR, and receptionist turns mislabeled as SDR/prospect
+
+**Output**:
+- Approved or corrected cleaned transcript
+- Judge feedback appended to `logs/transcript_judge_feedback.jsonl`
+- Corrected transcript persisted to Supabase when changes are made
+
+**Model**: `z-ai/glm4.7` via `https://integrate.api.nvidia.com/v1`
+
+**Timeout**: 90 seconds per request
+
+**Safety Principle**: Corrections are applied programmatically to labels only. Stage 4.1 never rewrites dialogue content.
+
+---
+
+### Stage 4.5: DM Discovery Agent
+**File**: `stages/dm_discovery.py`
+
+**Purpose**: Uses cleaned transcripts to identify the actual decision maker rather than assuming the first associated contact.
+
+**Input**:
+- `CompanyJourney`
+- Cleaned transcript list
+- HubSpot contact list
+
+**Output**:
+- Updates `journey.dm_contact` when confidence is `high` or `medium`
+- Falls back to `contacts[0]` on low confidence or no match
+
+**Matching Logic**:
+- LLM extracts the likely decision-maker name/title from the conversation
+- Code fuzzy substring-matches the result back to the HubSpot contacts list
+
+**Model**: gpt-4o-mini with temperature=0
+
+---
+
 ### Stage 5: BANTIC Analysis Agent
 **File**: `stages/bantic_analysis.py`
 
@@ -140,6 +195,32 @@ The AE Handoff Brief Agent is a standalone 7-stage multi-agent pipeline that tra
 **Model**: gpt-4o-mini with temperature=0
 
 **Key Principle**: All scores based strictly on transcript evidence. No inference beyond what was said.
+
+**Persistence**:
+- Writes BANTIC fields back to Supabase.
+- Sets `analysis_status = "completed"`; the database check constraint rejects `"complete"`.
+
+---
+
+### Stage 5.5: Final Judge
+**File**: `stages/final_judge.py`
+
+**Purpose**: Uses GLM-4.7 through NVIDIA's API to review BANTIC scores and revise only clearly wrong values.
+
+**Input**:
+- Cleaned transcript
+- Original BANTIC scores, evidence, and captured info
+
+**Output**:
+- Approved or revised `BANTICScore`
+- Judge feedback appended to `logs/judge_feedback.jsonl`
+- Revised fields persisted to Supabase when changes are made
+
+**Model**: `z-ai/glm4.7` via `https://integrate.api.nvidia.com/v1`
+
+**Timeout**: 90 seconds per request
+
+**Principle**: Non-overcritical review. The judge should not nitpick borderline calls.
 
 ---
 
@@ -217,19 +298,25 @@ The AE Handoff Brief Agent is a standalone 7-stage multi-agent pipeline that tra
 ```
 HubSpot
   ├─ Call disposition (C - Meeting Scheduled)
+  ├─ Call activity date / hs_timestamp
+  ├─ Assigned owner
+  ├─ Call outcome
+  ├─ Recording URL
   ├─ Company details
   ├─ Contacts
-  └─ SDR owner name
+  └─ Associated company ID
         ↓
 Supabase calls table
-  ├─ Recording URL (from Deepgram submission)
+  ├─ Idempotency flag (ae_brief_sent)
+  ├─ Connected call metadata
   ├─ Raw transcript (from Deepgram)
+  ├─ Cleaned transcript (from OpenAI)
   ├─ BANTIC scores (from analysis)
   └─ Evidence quotes
         ↓
-Orchestrator (7 stages)
+Orchestrator (9 stages)
         ↓
-Handoff brief (Markdown file + database flag)
+Handoff brief + dashboard (local files + database flag)
 ```
 
 ## Key Design Decisions
@@ -264,11 +351,14 @@ Handoff brief (Markdown file + database flag)
 | 3 | Empty recording URL | Skip call, continue to next |
 | 3 | Deepgram API error | Mark as failed, log error, retry next cycle |
 | 4 | OpenAI error | Log error, skip call |
+| 4.1 | NVIDIA judge error/timeout | Log warning, keep cleaned transcript, continue |
 | 5 | OpenAI error | Log error, skip call |
 | 5 | JSON parse error | Try to extract from markdown wrapper, else skip |
+| 5.5 | NVIDIA judge error/timeout | Log warning, keep original BANTIC score, continue |
 | 6 | No analyzed calls | Log warning, skip company |
 | 7 | OpenAI error | Log error, skip brief generation |
 | 7 | File write error | Log error, skip save step |
+| 7 | Supabase contact schema mismatch | Log error; current run may continue with in-memory contacts |
 
 ---
 
@@ -281,7 +371,10 @@ Assuming 5 calls per company:
 | 1-2 | 1 | $0.0005 | $0.0005 |
 | 3 | 5 | $0.0043/min (avg 12 min) | $0.26 |
 | 4 | 5 | $0.00015 | $0.00075 |
+| 4.1 | 5 | NVIDIA API usage | varies |
+| 4.5 | 1 | $0.00015 | ~$0.00015 |
 | 5 | 5 | $0.0005 | $0.0025 |
+| 5.5 | 5 | NVIDIA API usage | varies |
 | 6 | - | $0 | $0 |
 | 7 | 1 | $0.001 | $0.001 |
 | **Total** | - | - | **~$0.26** |
@@ -311,7 +404,9 @@ Assuming 5 calls per company:
 ✓ Stage 1: Watcher found X pending calls
 ✓ Stage 2: Fetch complete: X contacts, Y calls
 ✓ Stage 3: Transcribed 5/5 calls
+✓ Stage 4.1 complete: X approved, Y revised
 ✓ Stage 5: BANTIC analysis for 5 calls
+✓ Stage 5.5 complete: X approved, Y revised
 ✓ Stage 6 complete: Overall Score X.X (Qualification Tier)
 ✓ Brief saved: handoffs/Company_handoff.md
 ```
@@ -338,5 +433,5 @@ Assuming 5 calls per company:
 
 ---
 
-**Last Updated**: 2026-04-28
-**Version**: 1.0
+**Last Updated**: 2026-05-01
+**Version**: 1.1

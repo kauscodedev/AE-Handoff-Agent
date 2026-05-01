@@ -12,7 +12,7 @@ A Python 3 multi-agent pipeline that automatically generates Account Executive h
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in all 5 keys
+cp .env.example .env   # fill in all 6 keys
 ```
 
 Required env vars (see `.env.example`): `HUBSPOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `NVIDIA_API_KEY`.
@@ -64,8 +64,10 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **PID lockfile**: orchestrator writes `/tmp/ae_handoff_orchestrator.lock` on startup to prevent duplicate instances.
 - **Watcher time window**: Stage 1 searches HubSpot calls with `hs_timestamp >= start of yesterday`; older calls are not picked up even with `ae_brief_sent = False`.
 - **DM confidence gating**: Stage 4.5 only updates `dm_contact` if confidence is `"high"` or `"medium"`; low-confidence results fall back to `contacts[0]`.
-- **`upsert_contact` schema gap**: `supabase_client.upsert_contact()` strips the `is_dm` field before upserting because the Supabase schema may not have that column yet.
-- **No tests**: There are no test files in the project. `scratch/test_supabase.py` is a manual connectivity probe only.
+- **`upsert_contact` schema gap**: `supabase_client.upsert_contact()` strips the `is_dm` field before upserting because the Supabase schema may not have that column yet. Live runs also showed the `contacts` table may be missing `name`; contact persistence can fail until the schema includes `hubspot_contact_id`, `hubspot_company_id`, `name`, `title`, and `email`.
+- **BANTIC analysis status**: Stage 5 writes `analysis_status = "completed"`; Supabase rejects `"complete"` via `calls_analysis_status_check`.
+- **NVIDIA judge timeouts**: Stages 4.1 and 5.5 set 90-second request timeouts; judge failures should log and allow the pipeline to continue where possible.
+- **Testing reality**: There is no formal automated test suite. `test_judge.py` and `test_transcript_judge.py` are judge smoke scripts, while `scratch/test_supabase.py` is a manual connectivity probe.
 - **Transcript judge** (Stage 4.1): Uses GLM-4.7 via NVIDIA API to verify speaker labels ([SDR]/[PROSPECT]) are correct; catches global swaps and individual turn mismatches
 - **Transcript corrections applied programmatically**: Stage 4.1 never rewrites dialogue content — only corrects labels via deterministic string replacement (prevents hallucination)
 - **Transcript judge log**: verdict, corrections applied, thinking snippet appended to `logs/transcript_judge_feedback.jsonl` per call
