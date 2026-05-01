@@ -107,6 +107,7 @@ def analyze_calls(calls: list) -> list:
                 score = future.result()
                 if score:
                     call.bantic_score = score
+                    call.analysis_status = "completed"
                     # Persist BANTIC scores to Supabase
                     update_call_fields(call.hubspot_call_id, {
                         "score_budget": score.score_budget,

@@ -22,6 +22,9 @@ class Call:
         self.company_id = company_id
         self.recording_url = recording_url
         self.call_date = call_date
+        self.call_outcome: Optional[str] = None
+        self.assigned_to: Optional[str] = None
+        self.is_trigger_call = False
         self.raw_transcript: Optional[str] = None
         self.cleaned_transcript: Optional[str] = None
         self.deepgram_request_id: Optional[str] = None
@@ -30,6 +33,10 @@ class Call:
         self.deepgram_topics: Optional[Dict[str, Any]] = None
         self.transcription_status = "pending"
         self.analysis_status = "pending"
+        self.transcript_judge_verdict: Optional[str] = None
+        self.transcript_judge_feedback: Optional[Dict[str, Any]] = None
+        self.final_judge_verdict: Optional[str] = None
+        self.final_judge_feedback: Optional[Dict[str, Any]] = None
 
 class BANTICScore:
     def __init__(self, 

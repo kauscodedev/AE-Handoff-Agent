@@ -69,11 +69,11 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **Score formula** (Stage 6, `score_module.py`): `(B×5 + A×20 + N×25 + T×15 + I×15 + CP×20) / 30`. Tier mapping: ≥8.1 = "Very High Intent", 8.0 = "High Intent", 5.0–7.9 = "Qualified", <5.0 = "Disqualified".
 - **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stages 4.1 and 5.5 use GLM-4.7 via NVIDIA API (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
 - **PID lockfile**: orchestrator writes `/tmp/ae_handoff_orchestrator.lock` on startup to prevent duplicate instances.
-- **Watcher time window**: Stage 1 searches HubSpot calls with `hs_timestamp >= start of yesterday`; older calls are not picked up even with `ae_brief_sent = False`.
+- **Watcher incremental fetch**: Stage 1 tracks the last successful watcher run in `.watcher_state.json` and only fetches HubSpot calls created AFTER that timestamp. This prevents re-processing the same historical calls on every run.
 - **DM confidence gating**: Stage 4.5 only updates `dm_contact` if confidence is `"high"` or `"medium"`; low-confidence results fall back to `contacts[0]`.
 - **`upsert_contact` schema gap**: `supabase_client.upsert_contact()` strips the `is_dm` field before upserting because the Supabase schema may not have that column yet. Live runs also showed the `contacts` table may be missing `name`; contact persistence can fail until the schema includes `hubspot_contact_id`, `hubspot_company_id`, `name`, `title`, and `email`.
 - **BANTIC analysis status**: Stage 5 writes `analysis_status = "completed"`; Supabase rejects `"complete"` via `calls_analysis_status_check`.
-- **NVIDIA judge timeouts**: Stages 4.1 and 5.5 set 90-second request timeouts; judge failures should log and allow the pipeline to continue where possible.
+- **NVIDIA judge timeouts**: Stages 4.1 and 5.5 set 30-second request timeouts for NVIDIA GLM-4.7 calls; judge failures log as warnings and the pipeline continues (judges are non-critical — they only revise clearly wrong scores).
 - **Testing reality**: There is no formal automated test suite. `test_judge.py` and `test_transcript_judge.py` are judge smoke scripts, while `scratch/test_supabase.py` is a manual connectivity probe.
 - **Transcript corrections** (Stage 4.1): Never rewrites dialogue — applies label-only corrections via deterministic string replacement using temp placeholders to avoid double-replacement during global SDR↔PROSPECT swaps. Verdicts logged to `logs/transcript_judge_feedback.jsonl`.
 - **BANTIC judge model** (Stage 5.5): Uses GLM-4.7 via NVIDIA API (`integrate.api.nvidia.com`); requires `NVIDIA_API_KEY` env var

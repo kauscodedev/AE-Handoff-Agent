@@ -120,7 +120,7 @@ Verify the speaker-to-role mapping is correct. Look for:
             max_tokens=2048,
             response_format={"type": "json_object"},
             extra_body={"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}},
-            timeout=90,
+            timeout=30,
         )
 
         response_content = completion.choices[0].message.content
@@ -234,6 +234,8 @@ def judge_transcripts(calls: List[Call]) -> List[Call]:
 
         # Run judgment
         judgment = _judge_call(call)
+        call.transcript_judge_verdict = judgment.get("verdict") if judgment else None
+        call.transcript_judge_feedback = judgment
 
         if judgment.get("error"):
             logger.warning(f"  ⚠️ Judge error for {call.hubspot_call_id}: {judgment['error']}")

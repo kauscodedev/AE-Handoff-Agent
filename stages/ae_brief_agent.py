@@ -10,22 +10,29 @@ from lib.html_generator import generate_html_brief, save_html_brief
 
 logger = logging.getLogger(__name__)
 
-AE_HANDOFF_PROMPT = """You are an AE handoff brief specialist. Generate a professional, data-driven brief based on the BANTIC analysis of {num_calls} SDR calls with {company_name}.
+AE_HANDOFF_PROMPT = """You are writing an AE takeover brief, not a generic summary.
 
-GROUND RULES:
-- Use UNKNOWN if a dimension is missing (score 0).
-- Quote evidence directly.
-- Be actionable and concise.
-- Each section should be 2-3 sentences max.
+Your job is to help the AE step into the next conversation quickly with a clear view of:
+- what is actually confirmed
+- what is still missing
+- why the meeting happened now
+- what the AE should ask next
+
+Rules:
+- Stay factual. Do not infer things the transcript does not support.
+- If something is unknown, say UNKNOWN plainly.
+- Prefer concrete language over vague sales phrasing.
+- Use short quoted evidence snippets only when they sharpen the point.
+- Write like an internal handoff note another seller would trust.
 
 OUTPUT REQUIRED:
 Return ONLY a valid JSON object with exactly these 5 keys:
 {{
-  "icp_fit": "Summary of company size, location, and DM status.",
-  "current_process": "What tools/workflows they use today. Reference what was discussed.",
-  "evaluating_tools": "Are they actively evaluating alternatives? What's the trigger? Timeline?",
-  "pain_need": "The specific business problem(s) identified. Cite evidence.",
-  "next_steps": "Specific gaps (Budget/Impact/etc.) the AE should address."
+  "icp_fit": "Company context, likely buying posture, and who seems involved in the deal. Mention uncertainty if DM authority is unclear.",
+  "current_process": "What they use today, how they currently operate, and any friction or gaps in that process.",
+  "evaluating_tools": "Why this opportunity is live now, whether they are actively evaluating, and any timing or urgency signals.",
+  "pain_need": "The strongest confirmed pain points or operational problems. Be specific.",
+  "next_steps": "What the AE should do next: missing BANTIC gaps, stakeholder questions, demo angles, and qualification checks."
 }}
 
 COMPANY CONTEXT:
@@ -36,8 +43,9 @@ COMPANY CONTEXT:
 - Meeting Time: {meeting_time}
 - SDR: {sdr_name}
 - Overall Score: {weighted_score}/10 ({qualification_tier})
+- Calls analyzed: {num_calls}
 
-BANTIC SCORES:
+BANTIC BEST-SCORE TABLE:
 {dimensions_table}
 """
 
@@ -123,8 +131,10 @@ def save_brief(company_name: str, brief_sections: Dict[str, str], hubspot_call_i
 
         logger.info(f"✓ Brief saved: {filename}")
 
-        # Update HubSpot company property
-        if update_company_property(company_id, "ae_handoff_brief", markdown_content):
+        # Update HubSpot company property when a company record exists.
+        if company_id == "INDIVIDUAL":
+            logger.info("Skipping HubSpot company property update for individual prospect flow")
+        elif update_company_property(company_id, "ae_handoff_brief", markdown_content):
             logger.info(f"✓ Updated HubSpot company {company_id} with AE Handoff Brief")
         else:
             logger.warning(f"✗ Failed to update HubSpot company property for {company_id}")

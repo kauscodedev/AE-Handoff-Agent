@@ -80,9 +80,12 @@ def _format_call_details(call_id: str, props: Dict[str, Any], company_id: Option
         "recording_url": props.get("hs_call_recording_url"),
     }
 
-def search_meeting_scheduled_calls(limit: int = 10, days_back: int = 1) -> List[Dict[str, Any]]:
+def search_meeting_scheduled_calls(limit: int = 10, since_timestamp_ms: Optional[int] = None) -> List[Dict[str, Any]]:
     """
     Search HubSpot calls directly for recent "C - Meeting Scheduled" outcomes.
+
+    If since_timestamp_ms is provided, only fetch calls with hs_timestamp > since_timestamp_ms.
+    Otherwise, default to last 24 hours (backwards compatibility).
 
     Returns call records with activity date, assigned owner, outcome, recording URL,
     and associated company ID so the orchestrator can hand off to Stage 2.
@@ -93,10 +96,13 @@ def search_meeting_scheduled_calls(limit: int = 10, days_back: int = 1) -> List[
         return []
 
     try:
-        since = (datetime.now() - timedelta(days=days_back)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        since_ms = int(since.timestamp() * 1000)
+        if since_timestamp_ms is None:
+            since = (datetime.now() - timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            since_ms = int(since.timestamp() * 1000)
+        else:
+            since_ms = since_timestamp_ms
         url = f"{HUBSPOT_API_URL}/crm/v3/objects/calls/search"
         payload = {
             "filterGroups": [
@@ -141,8 +147,11 @@ def search_meeting_scheduled_calls(limit: int = 10, days_back: int = 1) -> List[
 
             company_id = get_call_company_id(call_id)
             if not company_id:
-                logger.warning(f"Skipping Meeting Scheduled call {call_id}: no associated company")
-                continue
+                logger.warning(
+                    f"Meeting Scheduled call {call_id} has no associated company; "
+                    "falling back to trigger-call-only processing"
+                )
+                company_id = "INDIVIDUAL"
 
             calls.append(_format_call_details(call_id, item.get("properties", {}), company_id))
 

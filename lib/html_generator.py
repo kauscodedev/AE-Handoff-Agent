@@ -11,7 +11,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{company_name} - AE Handoff Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
         * {{
             margin: 0;
@@ -19,304 +19,516 @@ HTML_TEMPLATE = """
             box-sizing: border-box;
         }}
         :root {{
-            --bg-color: #0f172a;
-            --card-bg: #1e293b;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --accent: #38bdf8;
-            --success: #22c55e;
-            --warning: #eab308;
-            --danger: #ef4444;
-            --border: #334155;
+            --bg: #f3efe6;
+            --surface: rgba(255, 255, 255, 0.78);
+            --surface-strong: rgba(255, 255, 255, 0.92);
+            --ink: #1e2930;
+            --muted: #667681;
+            --line: rgba(30, 41, 48, 0.12);
+            --accent: #0f766e;
+            --accent-soft: rgba(15, 118, 110, 0.12);
+            --danger: #b42318;
+            --danger-soft: rgba(180, 35, 24, 0.12);
+            --warn: #b45309;
+            --warn-soft: rgba(180, 83, 9, 0.12);
+            --success: #166534;
+            --success-soft: rgba(22, 101, 52, 0.12);
+            --shadow: 0 18px 50px rgba(37, 45, 52, 0.08);
         }}
         body {{
-            font-family: 'Inter', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            line-height: 1.6;
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 28%),
+                radial-gradient(circle at top right, rgba(180, 83, 9, 0.10), transparent 26%),
+                linear-gradient(180deg, #f6f2e9 0%, #ebe4d8 100%);
+            min-height: 100vh;
+            line-height: 1.55;
         }}
         .container {{
-            max-width: 1400px;
+            max-width: 1440px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 32px 24px 56px;
         }}
-        .header {{
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 2rem;
-            margin-bottom: 2rem;
-        }}
-        .header-title {{
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
-            color: var(--accent);
-        }}
-        .header-meta {{
+        .hero {{
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+            grid-template-columns: 1.3fr 0.9fr;
+            gap: 20px;
+            margin-bottom: 20px;
         }}
-        .meta-item {{
-            padding: 1rem;
-            background: var(--bg-color);
-            border-radius: 6px;
-            border-left: 3px solid var(--accent);
+        .panel {{
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.65);
+            backdrop-filter: blur(18px);
+            box-shadow: var(--shadow);
+            border-radius: 18px;
+            padding: 24px;
         }}
-        .meta-label {{
-            font-size: 0.875rem;
-            color: var(--text-secondary);
+        .eyebrow {{
+            font-size: 12px;
+            letter-spacing: 0.08em;
             text-transform: uppercase;
-            margin-bottom: 0.25rem;
+            color: var(--muted);
+            margin-bottom: 10px;
         }}
-        .meta-value {{
-            font-size: 1.125rem;
-            font-weight: 600;
-            color: var(--text-primary);
+        .hero h1 {{
+            font-family: 'Sora', sans-serif;
+            font-size: 46px;
+            line-height: 1.05;
+            margin-bottom: 12px;
+        }}
+        .hero-subtitle {{
+            max-width: 760px;
+            color: var(--muted);
+            font-size: 16px;
+            margin-bottom: 18px;
         }}
         .score-badge {{
-            display: inline-block;
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            border-radius: 999px;
             font-weight: 700;
-            margin-top: 1rem;
+            margin-bottom: 18px;
         }}
-        .score-badge.very-high {{
-            background: #14532d;
-            color: #4ade80;
+        .score-badge.very-high-intent {{
+            background: var(--success-soft);
+            color: var(--success);
         }}
-        .score-badge.high {{
-            background: #1e3a8a;
-            color: #60a5fa;
+        .score-badge.high-intent {{
+            background: var(--accent-soft);
+            color: var(--accent);
         }}
         .score-badge.qualified {{
-            background: #713f12;
-            color: #fbbf24;
+            background: var(--warn-soft);
+            color: var(--warn);
         }}
         .score-badge.disqualified {{
-            background: #450a0a;
-            color: #f87171;
+            background: var(--danger-soft);
+            color: var(--danger);
+        }}
+        .hero-stats {{
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }}
+        .stat-card {{
+            background: var(--surface-strong);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 14px 16px;
+            min-height: 94px;
+        }}
+        .stat-label {{
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 10px;
+        }}
+        .stat-value {{
+            font-size: 18px;
+            font-weight: 700;
+        }}
+        .hero-brief {{
+            display: grid;
+            gap: 12px;
+        }}
+        .signal-card {{
+            padding: 18px;
+            border-radius: 16px;
+            border: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,0.72));
+        }}
+        .signal-title {{
+            font-family: 'Sora', sans-serif;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }}
+        .signal-copy {{
+            color: var(--muted);
+            font-size: 15px;
         }}
         .section {{
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 2rem;
-            margin-bottom: 2rem;
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.65);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(18px);
+            border-radius: 18px;
+            padding: 24px;
+            margin-bottom: 20px;
         }}
         .section-title {{
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 1.5rem;
-            color: var(--accent);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
+            font-family: 'Sora', sans-serif;
+            font-size: 22px;
+            margin-bottom: 6px;
+        }}
+        .section-subtitle {{
+            color: var(--muted);
+            font-size: 14px;
+            margin-bottom: 18px;
         }}
         .contacts-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 1rem;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 12px;
         }}
         .contact-card {{
-            background: var(--bg-color);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 1rem;
+            background: var(--surface-strong);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 16px;
         }}
         .contact-name {{
-            font-weight: 600;
-            color: var(--text-primary);
-            margin-bottom: 0.25rem;
+            font-weight: 700;
+            margin-bottom: 4px;
         }}
         .contact-title {{
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
+            font-size: 14px;
+            color: var(--muted);
+            margin-bottom: 10px;
         }}
         .contact-email {{
-            font-size: 0.875rem;
+            font-size: 14px;
             color: var(--accent);
-            word-break: break-all;
+            word-break: break-word;
         }}
         .dm-badge {{
-            display: inline-block;
-            background: var(--success);
-            color: var(--bg-color);
-            padding: 0.25rem 0.75rem;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            margin-top: 0.5rem;
+            display: inline-flex;
+            margin-top: 10px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-size: 12px;
+            font-weight: 700;
+        }}
+        .coverage-grid {{
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 18px;
+        }}
+        .coverage-card {{
+            background: var(--surface-strong);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 18px;
+        }}
+        .coverage-list {{
+            display: grid;
+            gap: 10px;
+        }}
+        .coverage-item {{
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--line);
+        }}
+        .coverage-item:last-child {{
+            border-bottom: none;
+            padding-bottom: 0;
+        }}
+        .coverage-label {{
+            color: var(--muted);
         }}
         table {{
             width: 100%;
             border-collapse: collapse;
-            margin-top: 1rem;
         }}
         th {{
-            background: var(--bg-color);
-            color: var(--text-secondary);
             text-align: left;
-            padding: 0.75rem;
-            border-bottom: 2px solid var(--border);
-            font-size: 0.875rem;
+            font-size: 12px;
             text-transform: uppercase;
-            font-weight: 600;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            padding: 0 0 12px;
         }}
         td {{
-            padding: 0.75rem;
-            border-bottom: 1px solid var(--border);
-            font-size: 0.875rem;
+            padding: 14px 0;
+            border-top: 1px solid var(--line);
+            font-size: 14px;
+            vertical-align: top;
         }}
-        tr:hover {{
-            background: rgba(56, 189, 248, 0.05);
+        .call-meta {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }}
+        .pill {{
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+        }}
+        .pill.trigger {{
+            background: var(--accent-soft);
+            color: var(--accent);
+        }}
+        .pill.done {{
+            background: var(--success-soft);
+            color: var(--success);
+        }}
+        .pill.waiting {{
+            background: var(--warn-soft);
+            color: var(--warn);
+        }}
+        .pill.error {{
+            background: var(--danger-soft);
+            color: var(--danger);
         }}
         .score-cell {{
-            font-weight: 600;
-            border-radius: 4px;
-            padding: 0.5rem;
-            text-align: center;
-            min-width: 50px;
+            display: inline-flex;
+            justify-content: center;
+            min-width: 42px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            font-weight: 700;
         }}
-        .score-0 {{ background: rgba(239, 68, 68, 0.2); color: #fca5a5; }}
-        .score-1 {{ background: rgba(249, 115, 22, 0.2); color: #fdba74; }}
-        .score-2 {{ background: rgba(234, 179, 8, 0.2); color: #fcd34d; }}
-        .score-3 {{ background: rgba(34, 197, 94, 0.2); color: #86efac; }}
-        .grid-3 {{
+        .score-0 {{ background: rgba(180, 35, 24, 0.10); color: var(--danger); }}
+        .score-1 {{ background: rgba(180, 83, 9, 0.10); color: var(--warn); }}
+        .score-2 {{ background: rgba(15, 118, 110, 0.10); color: var(--accent); }}
+        .score-3 {{ background: rgba(22, 101, 52, 0.12); color: var(--success); }}
+        .two-up {{
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1rem;
-            margin-top: 1rem;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+        }}
+        .brief-grid {{
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
         }}
         .brief-card {{
-            background: var(--bg-color);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 1.5rem;
+            background: var(--surface-strong);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 18px;
+        }}
+        .brief-card.span-2 {{
+            grid-column: span 2;
         }}
         .brief-card-title {{
-            font-weight: 700;
-            color: var(--accent);
-            margin-bottom: 0.75rem;
-            font-size: 1rem;
+            font-family: 'Sora', sans-serif;
+            font-size: 14px;
+            margin-bottom: 10px;
         }}
         .brief-card-content {{
-            color: var(--text-secondary);
-            font-size: 0.925rem;
-            line-height: 1.6;
+            color: var(--muted);
+            font-size: 15px;
+        }}
+        .empty-note {{
+            color: var(--muted);
+            font-size: 14px;
         }}
         .footer {{
             text-align: center;
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-            margin-top: 2rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 13px;
+            padding-top: 8px;
+        }}
+        @media (max-width: 1080px) {{
+            .hero,
+            .coverage-grid,
+            .two-up,
+            .brief-grid {{
+                grid-template-columns: 1fr;
+            }}
+            .brief-card.span-2 {{
+                grid-column: auto;
+            }}
+            .hero-stats {{
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }}
+        }}
+        @media (max-width: 720px) {{
+            .container {{
+                padding: 18px 14px 40px;
+            }}
+            .hero h1 {{
+                font-size: 34px;
+            }}
+            .hero-stats {{
+                grid-template-columns: 1fr;
+            }}
+            table,
+            thead,
+            tbody,
+            th,
+            td,
+            tr {{
+                display: block;
+            }}
+            thead {{
+                display: none;
+            }}
+            td {{
+                border-top: 1px solid var(--line);
+                padding: 12px 0;
+            }}
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Header Section -->
-        <div class="header">
-            <div class="header-title">{company_name}</div>
-            <div class="header-meta">
-                <div class="meta-item">
-                    <div class="meta-label">Decision Maker</div>
-                    <div class="meta-value">{dm_contact}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">SDR</div>
-                    <div class="meta-value">{sdr_name}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Employees</div>
-                    <div class="meta-value">{employees}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Location</div>
-                    <div class="meta-value">{location}</div>
+        <section class="hero">
+            <div class="panel">
+                <div class="eyebrow">AE Handoff Dashboard</div>
+                <h1>{company_name}</h1>
+                <div class="hero-subtitle">{hero_summary}</div>
+                <div class="score-badge {tier_class}">{weighted_score}/10 | {qualification_tier}</div>
+                <div class="hero-stats">
+                    <div class="stat-card">
+                        <div class="stat-label">Decision Maker</div>
+                        <div class="stat-value">{dm_contact}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">SDR</div>
+                        <div class="stat-value">{sdr_name}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Meeting Scheduled</div>
+                        <div class="stat-value">{meeting_time}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Trigger Outcome</div>
+                        <div class="stat-value">{trigger_call_outcome}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Employees</div>
+                        <div class="stat-value">{employees}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Location</div>
+                        <div class="stat-value">{location}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Calls In Scope</div>
+                        <div class="stat-value">{calls_in_scope}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Calls Analyzed</div>
+                        <div class="stat-value">{calls_analyzed}</div>
+                    </div>
                 </div>
             </div>
-            <div style="border-top: 1px solid var(--border); padding-top: 1rem;">
-                <div class="meta-label">Qualification Score</div>
-                <div class="score-badge {tier_class}">{weighted_score}/10 - {qualification_tier}</div>
-            </div>
-        </div>
 
-        <!-- Contacts Section -->
-        <div class="section">
-            <div class="section-title">👥 Contacts at {company_name}</div>
+            <div class="hero-brief">
+                <div class="signal-card">
+                    <div class="signal-title">What AE Should Know First</div>
+                    <div class="signal-copy">{pain_need}</div>
+                </div>
+                <div class="signal-card">
+                    <div class="signal-title">Current Process</div>
+                    <div class="signal-copy">{current_process}</div>
+                </div>
+                <div class="signal-card">
+                    <div class="signal-title">Next Move</div>
+                    <div class="signal-copy">{next_steps}</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-title">Call Coverage</div>
+            <div class="section-subtitle">This is the real scope the brief was built from, including which calls actually reached analysis.</div>
+            <div class="coverage-grid">
+                <div class="coverage-card">
+                    <div class="coverage-list">
+                        <div class="coverage-item"><span class="coverage-label">Trigger call date</span><strong>{meeting_time}</strong></div>
+                        <div class="coverage-item"><span class="coverage-label">Trigger disposition</span><strong>{trigger_call_outcome}</strong></div>
+                        <div class="coverage-item"><span class="coverage-label">Contacts fetched from HubSpot</span><strong>{contacts_count}</strong></div>
+                        <div class="coverage-item"><span class="coverage-label">Calls in analysis set</span><strong>{calls_in_scope}</strong></div>
+                        <div class="coverage-item"><span class="coverage-label">Recordings available</span><strong>{recording_coverage}</strong></div>
+                        <div class="coverage-item"><span class="coverage-label">Fully analyzed calls</span><strong>{calls_analyzed}</strong></div>
+                    </div>
+                </div>
+                <div class="coverage-card">
+                    <div class="signal-title" style="margin-bottom: 8px;">Evaluation Signal</div>
+                    <div class="signal-copy">{evaluating_tools}</div>
+                    <div class="signal-title" style="margin-top: 18px; margin-bottom: 8px;">ICP Fit</div>
+                    <div class="signal-copy">{icp_fit}</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-title">Contacts</div>
+            <div class="section-subtitle">HubSpot is the source of truth for company and contact context.</div>
             <div class="contacts-grid">
                 {contacts_html}
             </div>
-        </div>
+        </section>
 
-        <!-- Connected Calls Timeline -->
-        <div class="section">
-            <div class="section-title">📞 Connected Calls</div>
+        <section class="section">
+            <div class="section-title">Call Set</div>
+            <div class="section-subtitle">Trigger plus prior relevant connected or high-intent callback history.</div>
             <table>
                 <thead>
                     <tr>
-                        <th>Call Date</th>
+                        <th>Call</th>
                         <th>Disposition</th>
                         <th>Recording</th>
-                        <th>Analysis Status</th>
+                        <th>Transcript</th>
+                        <th>Analysis</th>
                     </tr>
                 </thead>
                 <tbody>
                     {calls_timeline_html}
                 </tbody>
             </table>
-        </div>
+        </section>
 
-        <!-- Per-Call BANTIC Matrix -->
-        <div class="section">
-            <div class="section-title">📊 Per-Call BANTIC Scores</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Call Date</th>
-                        <th>Budget</th>
-                        <th>Authority</th>
-                        <th>Need</th>
-                        <th>Timeline</th>
-                        <th>Impact</th>
-                        <th>Current Process</th>
-                        <th>Weighted</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {per_call_matrix_html}
-                </tbody>
-            </table>
-        </div>
+        <section class="two-up">
+            <div class="section">
+                <div class="section-title">Per-Call BANTIC</div>
+                <div class="section-subtitle">Only calls that reached analysis appear here.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Call Date</th>
+                            <th>Budget</th>
+                            <th>Authority</th>
+                            <th>Need</th>
+                            <th>Timeline</th>
+                            <th>Impact</th>
+                            <th>Current Process</th>
+                            <th>Weighted</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {per_call_matrix_html}
+                    </tbody>
+                </table>
+            </div>
 
-        <!-- Consolidated BANTIC Profile -->
-        <div class="section">
-            <div class="section-title">🎯 Consolidated BANTIC Profile (Best Scores)</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Dimension</th>
-                        <th>Best Score</th>
-                        <th>Best Evidence</th>
-                        <th>What's Missing</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {consolidated_rows}
-                </tbody>
-            </table>
-        </div>
+            <div class="section">
+                <div class="section-title">Best Signal By Dimension</div>
+                <div class="section-subtitle">This is the best evidence the AE can carry into the takeover conversation.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Dimension</th>
+                            <th>Best</th>
+                            <th>Evidence</th>
+                            <th>Missing</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {consolidated_rows}
+                    </tbody>
+                </table>
+            </div>
+        </section>
 
-        <!-- AE Brief Sections -->
-        <div class="section">
-            <div class="section-title">📝 AE Handoff Brief</div>
-            <div class="grid-3">
+        <section class="section">
+            <div class="section-title">AE Handoff Brief</div>
+            <div class="section-subtitle">Readable takeover notes for the next conversation, not just a score sheet.</div>
+            <div class="brief-grid">
                 <div class="brief-card">
                     <div class="brief-card-title">ICP Fit</div>
                     <div class="brief-card-content">{icp_fit}</div>
@@ -329,26 +541,43 @@ HTML_TEMPLATE = """
                     <div class="brief-card-title">Evaluating Tools</div>
                     <div class="brief-card-content">{evaluating_tools}</div>
                 </div>
-            </div>
-            <div class="grid-3" style="margin-top: 1rem;">
                 <div class="brief-card">
                     <div class="brief-card-title">Pain / Need</div>
                     <div class="brief-card-content">{pain_need}</div>
                 </div>
-                <div class="brief-card" style="grid-column: span 2;">
+                <div class="brief-card span-2">
                     <div class="brief-card-title">Recommended Next Steps</div>
                     <div class="brief-card-content">{next_steps}</div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div class="footer">
-            Generated by AE Handoff Brief Agent
-        </div>
+        <div class="footer">Generated by AE Handoff Brief Agent</div>
     </div>
 </body>
 </html>
 """
+
+def _format_display_date(value) -> str:
+    if not value:
+        return "Unknown"
+    text = str(value)
+    try:
+        normalized = text.replace("Z", "+00:00")
+        dt = __import__("datetime").datetime.fromisoformat(normalized)
+        return dt.strftime("%d %b %Y, %I:%M %p")
+    except ValueError:
+        return text
+
+def _status_pill(status: str, label: str = None) -> str:
+    normalized = (status or "").lower()
+    css_class = "waiting"
+    if normalized in {"completed", "done", "approved", "revised"}:
+        css_class = "done"
+    elif normalized in {"failed", "error"}:
+        css_class = "error"
+    text = label or status or "pending"
+    return f'<span class="pill {css_class}">{text}</span>'
 
 
 def generate_html_brief(journey, score_result: Dict[str, Any], brief_sections: Dict[str, str]) -> str:
@@ -374,20 +603,39 @@ def generate_html_brief(journey, score_result: Dict[str, Any], brief_sections: D
 
         # Build calls timeline HTML
         calls_timeline_html = ""
+        calls_in_scope = len(journey.calls) if journey.calls else 0
+        analyzed_calls = 0
+        recordings_available = 0
+        trigger_call_outcome = "Unknown"
         if journey.calls:
             for call in journey.calls:
-                call_date = call.get("call_date", "N/A")
-                disposition = call.get("call_disposition_label", "N/A")
-                recording = "✓" if call.get("recording_url") else "✗"
-                status = call.get("analysis_status", "pending")
+                is_trigger_call = call.get("is_trigger_call", False)
+                call_date = _format_display_date(call.get("call_date", "N/A"))
+                disposition = call.get("call_outcome") or call.get("call_disposition_label", "N/A")
+                recording = _status_pill("done", "Available") if call.get("recording_url") else _status_pill("waiting", "Missing")
+                transcript_status = call.get("transcription_status", "pending")
+                analysis_status = call.get("analysis_status", "pending")
+                if call.get("recording_url"):
+                    recordings_available += 1
+                if analysis_status == "completed":
+                    analyzed_calls += 1
+                trigger_pill = '<span class="pill trigger">Trigger</span>' if is_trigger_call else ''
+                if is_trigger_call:
+                    trigger_call_outcome = disposition
                 calls_timeline_html += f'''
                 <tr>
-                    <td>{call_date}</td>
+                    <td>
+                        <div>{call_date}</div>
+                        <div class="call-meta">{trigger_pill}</div>
+                    </td>
                     <td>{disposition}</td>
-                    <td style="text-align: center;">{recording}</td>
-                    <td>{status}</td>
+                    <td>{recording}</td>
+                    <td>{_status_pill(transcript_status, transcript_status.title())}</td>
+                    <td>{_status_pill(analysis_status, analysis_status.title())}</td>
                 </tr>
                 '''
+        else:
+            calls_timeline_html = '<tr><td colspan="5" class="empty-note">No calls in scope.</td></tr>'
 
         # Build per-call matrix HTML
         per_call_matrix_html = ""
@@ -395,7 +643,7 @@ def generate_html_brief(journey, score_result: Dict[str, Any], brief_sections: D
         for call_data in per_call_matrix:
             scores = call_data.get("scores", {})
             weighted = call_data.get("weighted", 0)
-            call_date = call_data.get("date", "N/A")
+            call_date = _format_display_date(call_data.get("date", "N/A"))
 
             per_call_matrix_html += f'''
             <tr>
@@ -409,6 +657,8 @@ def generate_html_brief(journey, score_result: Dict[str, Any], brief_sections: D
                 <td style="font-weight: 600; color: var(--accent);">{weighted}</td>
             </tr>
             '''
+        if not per_call_matrix_html:
+            per_call_matrix_html = '<tr><td colspan="8" class="empty-note">No analyzed calls yet.</td></tr>'
 
         # Build consolidated rows HTML
         consolidated_rows = ""
@@ -429,21 +679,34 @@ def generate_html_brief(journey, score_result: Dict[str, Any], brief_sections: D
                 <td>{missing}</td>
             </tr>
             '''
+        if not consolidated_rows:
+            consolidated_rows = '<tr><td colspan="4" class="empty-note">No consolidated scores available yet.</td></tr>'
 
         # Determine tier CSS class
         tier = score_result.get("qualification_tier", "Disqualified")
         tier_class = tier.lower().replace(" ", "-")
+        hero_summary = (
+            "This dashboard is built from the trigger Meeting Scheduled call and earlier relevant history. "
+            "It is designed to help the AE separate confirmed signal from what is still missing."
+        )
 
         # Format template
         html = HTML_TEMPLATE.format(
             company_name=journey.company.name,
             dm_contact=journey.dm_contact.name if journey.dm_contact else "UNKNOWN",
             sdr_name=journey.sdr_name or "Unknown",
+            meeting_time=_format_display_date(journey.scheduled_meeting_time) if journey.scheduled_meeting_time else "Unknown",
             employees=journey.company.employees or "UNKNOWN",
             location=journey.company.location or "UNKNOWN",
             weighted_score=score_result.get("weighted_score", 0),
             qualification_tier=tier,
             tier_class=tier_class,
+            hero_summary=hero_summary,
+            trigger_call_outcome=trigger_call_outcome,
+            calls_in_scope=calls_in_scope,
+            calls_analyzed=analyzed_calls,
+            contacts_count=len(journey.contacts or []),
+            recording_coverage=f"{recordings_available}/{calls_in_scope}",
             contacts_html=contacts_html,
             calls_timeline_html=calls_timeline_html,
             per_call_matrix_html=per_call_matrix_html,

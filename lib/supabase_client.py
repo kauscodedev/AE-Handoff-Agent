@@ -127,3 +127,87 @@ def get_contacts_for_company(company_id: str) -> list:
     except Exception as e:
         logger.error(f"Error fetching contacts for company {company_id}: {e}")
         return []
+
+def create_ae_handoff_run(run_data: dict) -> str:
+    """Create a new ae_handoff_runs record. Returns run_id on success."""
+    try:
+        supabase = get_supabase()
+        response = supabase.table("ae_handoff_runs").insert(run_data).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("id")
+        return None
+    except Exception as e:
+        logger.error(f"Error creating ae_handoff_run: {e}")
+        return None
+
+def upsert_ae_handoff_run(run_data: dict) -> str:
+    """Upsert an ae_handoff_runs record by trigger_call_id. Returns run_id on success."""
+    try:
+        supabase = get_supabase()
+        response = supabase.table("ae_handoff_runs").upsert(
+            run_data,
+            on_conflict="trigger_call_id"
+        ).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("id")
+        return None
+    except Exception as e:
+        logger.error(f"Error upserting ae_handoff_run: {e}")
+        return None
+
+def update_ae_handoff_run(run_id: str, updates: dict) -> bool:
+    """Update an ae_handoff_runs record."""
+    try:
+        supabase = get_supabase()
+        supabase.table("ae_handoff_runs").update(updates).eq("id", run_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error updating ae_handoff_run {run_id}: {e}")
+        return False
+
+def create_ae_handoff_run_call(call_data: dict) -> bool:
+    """Create a new ae_handoff_run_calls record."""
+    try:
+        supabase = get_supabase()
+        supabase.table("ae_handoff_run_calls").insert(call_data).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error creating ae_handoff_run_call: {e}")
+        return False
+
+def upsert_ae_handoff_run_call(call_data: dict) -> str:
+    """Upsert an ae_handoff_run_calls record by (run_id, hubspot_call_id). Returns row id on success."""
+    try:
+        supabase = get_supabase()
+        response = supabase.table("ae_handoff_run_calls").upsert(
+            call_data,
+            on_conflict="run_id,hubspot_call_id"
+        ).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("id")
+        return None
+    except Exception as e:
+        logger.error(f"Error upserting ae_handoff_run_call: {e}")
+        return None
+
+def update_ae_handoff_run_call(call_id: str, updates: dict) -> bool:
+    """Update an ae_handoff_run_calls record."""
+    try:
+        supabase = get_supabase()
+        supabase.table("ae_handoff_run_calls").update(updates).eq("id", call_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error updating ae_handoff_run_call {call_id}: {e}")
+        return False
+
+def update_ae_handoff_run_call_by_keys(run_id: str, hubspot_call_id: str, updates: dict) -> bool:
+    """Update ae_handoff_run_calls by composite business key."""
+    try:
+        supabase = get_supabase()
+        supabase.table("ae_handoff_run_calls").update(updates).eq("run_id", run_id).eq(
+            "hubspot_call_id", hubspot_call_id
+        ).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error updating ae_handoff_run_call for run={run_id} call={hubspot_call_id}: {e}")
+        return False

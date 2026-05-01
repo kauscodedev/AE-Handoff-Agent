@@ -146,7 +146,7 @@ def _judge_call(call: Call, score: BANTICScore) -> Dict[str, Any]:
             max_tokens=4096,
             response_format={"type": "json_object"},
             extra_body={"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}},
-            timeout=90,
+            timeout=30,
         )
 
         # Parse response
@@ -269,6 +269,8 @@ def judge_bantic_scores(
 
         # Run judgment
         judgment = _judge_call(call, score)
+        call.final_judge_verdict = judgment.get("verdict") if judgment else None
+        call.final_judge_feedback = judgment
 
         if judgment.get("error"):
             logger.warning(f"  ⚠️ Judge error for {call.hubspot_call_id}: {judgment['error']}")
