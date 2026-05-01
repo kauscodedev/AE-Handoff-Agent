@@ -28,12 +28,17 @@ python3 orchestrator.py --interval 120
 
 # One-shot run (useful for testing)
 python3 orchestrator.py --once
+
+# Run judge smoke tests (no pytest needed — standalone scripts)
+python3 test_judge.py
+python3 test_transcript_judge.py
 ```
 
 Scratch utilities (not part of the pipeline):
 - `scratch/test_supabase.py` — verify Supabase connectivity
 - `scratch/debug_fetch.py` — inspect Stage 2 fetch output
 - `scratch/reset_flags.py` — reset `ae_brief_sent = False` to re-process rows
+- `scratch/test_operating_hours.py` — verify IST operating window logic (17:00–04:00 IST)
 
 ## Pipeline Architecture (9 Stages)
 
@@ -56,7 +61,9 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 
 ## Key Behaviours to Know
 
+- **Operating hours gate**: orchestrator only polls during **17:00–04:00 IST**; outside that window it sleeps until 17:00. Use `--once` to bypass for testing.
 - **Idempotent**: the `ae_brief_sent` flag in Supabase prevents re-processing. Use `scratch/reset_flags.py` to re-run.
+- **`journey.calls` are raw dicts**: `CompanyJourney.calls` is a list of plain dicts (from HubSpot/Supabase), not `Call` objects. The orchestrator builds `Call` objects from them before Stages 3–7.
 - **Transcript reuse**: if `raw_transcript` already exists in the Supabase row, Stage 3 is skipped.
 - **Best score wins**: Stage 6 takes the highest per-dimension score across all calls for a company, not the average.
 - **Score formula** (Stage 6, `score_module.py`): `(B×5 + A×20 + N×25 + T×15 + I×15 + CP×20) / 30`. Tier mapping: ≥8.1 = "Very High Intent", 8.0 = "High Intent", 5.0–7.9 = "Qualified", <5.0 = "Disqualified".
@@ -68,15 +75,16 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **BANTIC analysis status**: Stage 5 writes `analysis_status = "completed"`; Supabase rejects `"complete"` via `calls_analysis_status_check`.
 - **NVIDIA judge timeouts**: Stages 4.1 and 5.5 set 90-second request timeouts; judge failures should log and allow the pipeline to continue where possible.
 - **Testing reality**: There is no formal automated test suite. `test_judge.py` and `test_transcript_judge.py` are judge smoke scripts, while `scratch/test_supabase.py` is a manual connectivity probe.
-- **Transcript judge** (Stage 4.1): Uses GLM-4.7 via NVIDIA API to verify speaker labels ([SDR]/[PROSPECT]) are correct; catches global swaps and individual turn mismatches
-- **Transcript corrections applied programmatically**: Stage 4.1 never rewrites dialogue content — only corrects labels via deterministic string replacement (prevents hallucination)
-- **Transcript judge log**: verdict, corrections applied, thinking snippet appended to `logs/transcript_judge_feedback.jsonl` per call
+- **Transcript corrections** (Stage 4.1): Never rewrites dialogue — applies label-only corrections via deterministic string replacement using temp placeholders to avoid double-replacement during global SDR↔PROSPECT swaps. Verdicts logged to `logs/transcript_judge_feedback.jsonl`.
 - **BANTIC judge model** (Stage 5.5): Uses GLM-4.7 via NVIDIA API (`integrate.api.nvidia.com`); requires `NVIDIA_API_KEY` env var
-- **Non-overcritical judge**: Stage 5.5 only revises scores if clearly wrong (evidence doesn't support it, topic never discussed but scored >0, or off by 2+ points)
-- **BANTIC judge log**: full feedback (thinking, original vs final scores, change reasons) appended to `logs/judge_feedback.jsonl` per call run
+- **Non-overcritical judge**: Stage 5.5 only revises scores if clearly wrong (evidence doesn't support it, topic never discussed but scored >0, or off by 2+ points). Full feedback logged to `logs/judge_feedback.jsonl`.
 
 ## Outputs
 
 - `handoffs/<Company>_handoff.md` — Markdown brief (5 sections: ICP Fit, Current Process, Evaluating Tools, Pain/Need, Next Steps). Note: Path is hardcoded to `/Users/kaustubhchauhan/ae-handoff-brief-agent/handoffs/` in `ae_brief_agent.py`.
 - `dashboards/<Company>_dashboard.html` — Standalone dark-theme HTML dashboard (self-contained; auto-created relative to project root).
 - `logs/orchestrator.log` — Structured log output.
+- `logs/judge_feedback.jsonl` — Per-run BANTIC judge verdicts (original vs final scores, thinking snippet, reasons for revision).
+- `logs/transcript_judge_feedback.jsonl` — Per-run transcript judge verdicts (corrections applied, thinking snippet).
+
+See `ARCHITECTURE.md` for per-stage cost, error handling, and design rationale.

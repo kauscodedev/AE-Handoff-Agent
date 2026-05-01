@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any
 from openai import OpenAI
 from lib.types import CompanyJourney
 from lib.supabase_client import update_handoff_sent
+from lib.hubspot_client import update_company_property
 from lib.html_generator import generate_html_brief, save_html_brief
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ def generate_ae_brief(journey: CompanyJourney, score_result: Dict[str, Any]) -> 
 
 
 def save_brief(company_name: str, brief_sections: Dict[str, str], hubspot_call_id: str, company_id: str) -> bool:
-    """Save brief sections to local .md file and mark as sent in Supabase."""
+    """Save brief sections to local .md file, update HubSpot company property, and mark as sent in Supabase."""
     try:
         # Build markdown content from sections
         markdown_content = f"# {company_name} Handoff Brief\n\n"
@@ -121,6 +122,12 @@ def save_brief(company_name: str, brief_sections: Dict[str, str], hubspot_call_i
             f.write(markdown_content)
 
         logger.info(f"✓ Brief saved: {filename}")
+
+        # Update HubSpot company property
+        if update_company_property(company_id, "ae_handoff_brief", markdown_content):
+            logger.info(f"✓ Updated HubSpot company {company_id} with AE Handoff Brief")
+        else:
+            logger.warning(f"✗ Failed to update HubSpot company property for {company_id}")
 
         # Mark as sent in Supabase
         update_handoff_sent(company_id, hubspot_call_id)

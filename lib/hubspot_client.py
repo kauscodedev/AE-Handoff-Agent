@@ -260,3 +260,20 @@ def get_owner_name(owner_id: str) -> Optional[str]:
     except Exception as e:
         logger.debug(f"Could not fetch owner name for {owner_id}: {e}")
         return None
+
+def update_company_property(company_id: str, property_name: str, value: str) -> bool:
+    """Update a single property on a HubSpot company."""
+    try:
+        url = f"{HUBSPOT_API_URL}/crm/v3/objects/companies/{company_id}"
+        payload = {
+            "properties": {
+                property_name: value
+            }
+        }
+        response = requests.patch(url, headers=get_headers(), json=payload)
+        response.raise_for_status()
+        logger.debug(f"✓ Updated company {company_id} property '{property_name}'")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating company {company_id} property '{property_name}': {e}")
+        return False
