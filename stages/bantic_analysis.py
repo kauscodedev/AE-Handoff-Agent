@@ -9,7 +9,9 @@ from lib.supabase_client import update_call_fields
 
 logger = logging.getLogger(__name__)
 
-BANTIC_PROMPT = """You are a senior sales qualification analyst. Analyze this B2B sales call transcript and score the qualification level for the BANTIC dimensions.
+BANTIC_PROMPT = """You are a senior sales qualification analyst. Analyze this B2B sales call and score the qualification level for the BANTIC dimensions.
+
+You may receive CALL NOTES from HubSpot/Nooks in addition to the transcript. When call notes are available, treat them as high-priority sales context because they are the SDR/Nooks summary of the call. Use the transcript to verify, enrich, and quote evidence. If notes and transcript conflict, prefer the call notes for explicit qualification facts and mention the conflict in the evidence or info_captured field.
 
 ## BANTIC DIMENSIONS:
 1. BUDGET (Score 0-3): Has a budget been mentioned or confirmed?
@@ -39,7 +41,10 @@ Return ONLY a JSON object:
 }}
 
 TRANSCRIPT:
-{transcript}"""
+{transcript}
+
+CALL NOTES (HubSpot/Nooks summary, may be absent):
+{call_notes}"""
 
 
 def get_openai_client():
@@ -51,14 +56,20 @@ def get_openai_client():
 
 def analyze_call(call: Call) -> Optional[BANTICScore]:
     """Stage 5: BANTIC Analysis Agent."""
-    if not call.cleaned_transcript:
+    call_notes = getattr(call, "call_notes", None)
+    if not call.cleaned_transcript and not call_notes:
         return None
+    transcript = call.cleaned_transcript or "No transcript available. Score only from call notes if they contain explicit qualification facts."
+    notes_text = call_notes or "No call notes available."
 
     try:
         client = get_openai_client()
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": BANTIC_PROMPT.format(transcript=call.cleaned_transcript)}],
+            messages=[{
+                "role": "user",
+                "content": BANTIC_PROMPT.format(transcript=transcript, call_notes=notes_text),
+            }],
             response_format={"type": "json_object"},
             temperature=0,
             timeout=60

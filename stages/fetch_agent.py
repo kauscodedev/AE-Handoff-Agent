@@ -127,6 +127,8 @@ def fetch_company_journey(company_id: str, trigger_call_id: str) -> Optional[Com
                         "call_disposition_label": details["call_disposition_label"],
                         "call_outcome": details.get("call_outcome") or details["call_disposition_label"],
                         "recording_url": details["recording_url"],
+                        "call_notes": details.get("call_notes"),
+                        "call_notes_html": details.get("call_notes_html"),
                         "assigned_to": details.get("assigned_to") or details.get("owner_name"),
                         "owner_name": details.get("owner_name"),
                         "is_trigger_call": is_trigger_call,

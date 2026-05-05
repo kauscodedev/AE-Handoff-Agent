@@ -89,6 +89,13 @@ def _build_run_contacts(contacts) -> list:
     ]
 
 def _build_run_call_payload(run_id: str, call, call_data: Dict[str, Any]) -> Dict[str, Any]:
+    bantic_scores = {}
+    if getattr(call, "call_notes", None):
+        bantic_scores = {
+            "call_notes": call.call_notes,
+            "call_notes_available": True,
+        }
+
     return {
         "run_id": run_id,
         "hubspot_call_id": call.hubspot_call_id,
@@ -112,14 +119,19 @@ def _build_run_call_payload(run_id: str, call, call_data: Dict[str, Any]) -> Dic
         "transcript_judge_feedback": getattr(call, "transcript_judge_feedback", None),
         "final_judge_verdict": getattr(call, "final_judge_verdict", None),
         "final_judge_feedback": getattr(call, "final_judge_feedback", None),
-        "bantic_scores": {},
+        "bantic_scores": bantic_scores,
     }
 
 def _update_run_call(run_id: str, call) -> None:
     bantic_score = getattr(call, "bantic_score", None)
     bantic_scores = {}
+    if getattr(call, "call_notes", None):
+        bantic_scores.update({
+            "call_notes": call.call_notes,
+            "call_notes_available": True,
+        })
     if bantic_score:
-        bantic_scores = {
+        bantic_scores.update({
             "score_budget": bantic_score.score_budget,
             "score_authority": bantic_score.score_authority,
             "score_need": bantic_score.score_need,
@@ -140,7 +152,7 @@ def _update_run_call(run_id: str, call) -> None:
             "current_process_info_captured": bantic_score.current_process_info_captured,
             "overall_summary": bantic_score.overall_summary,
             "sdr_coaching_note": bantic_score.sdr_coaching_note,
-        }
+        })
 
     update_ae_handoff_run_call_by_keys(
         run_id,
@@ -171,6 +183,7 @@ def _sync_journey_calls(journey, calls) -> None:
         call_data["recording_url"] = call.recording_url
         call_data["call_outcome"] = call.call_outcome
         call_data["assigned_to"] = call.assigned_to
+        call_data["call_notes"] = call.call_notes
         call_data["is_trigger_call"] = call.is_trigger_call
         call_data["raw_transcript"] = call.raw_transcript
         call_data["cleaned_transcript"] = call.cleaned_transcript
@@ -258,6 +271,7 @@ def process_company(company_id: str, hubspot_call_id: str):
             )
             call.call_outcome = call_data.get("call_outcome") or call_data.get("call_disposition_label")
             call.assigned_to = call_data.get("assigned_to") or call_data.get("owner_name")
+            call.call_notes = call_data.get("call_notes")
             call.is_trigger_call = call_data.get("is_trigger_call", False)
             call.transcription_status = call_data.get("transcription_status", "pending")
             call.analysis_status = call_data.get("analysis_status", "pending")

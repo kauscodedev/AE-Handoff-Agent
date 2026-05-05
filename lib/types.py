@@ -24,6 +24,7 @@ class Call:
         self.call_date = call_date
         self.call_outcome: Optional[str] = None
         self.assigned_to: Optional[str] = None
+        self.call_notes: Optional[str] = None
         self.is_trigger_call = False
         self.raw_transcript: Optional[str] = None
         self.cleaned_transcript: Optional[str] = None

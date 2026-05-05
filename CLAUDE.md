@@ -55,13 +55,13 @@ Specialist stages execute sequentially per trigger; Stage 5 (BANTIC scoring) run
 
 | Stage | File | What it does |
 |---|---|---|
-| 2 | `stages/fetch_agent.py` | Fetches company/contact/call data from HubSpot; narrows analysis calls to `C - Meeting Scheduled`, `C - Callback High Intent`, `C - Callback Low Intent`, `C - Gave a Referral`, and `Connected`; merges in stored transcript/analysis state from Supabase |
+| 2 | `stages/fetch_agent.py` | Fetches company/contact/call data from HubSpot, including Call Notes (`hs_call_body` / `hs_body_preview`) when present; narrows analysis calls to `C - Meeting Scheduled`, `C - Callback High Intent`, `C - Callback Low Intent`, `C - Gave a Referral`, and `Connected`; merges in stored transcript/analysis state from Supabase |
 | 3 | `stages/transcription.py` | Submits recording URL to Deepgram Nova-3 (synchronous STT + diarization via REST API) |
 | 4 | `stages/clean_transcript.py` | gpt-4o-mini relabels Speaker 0/1 → `[SDR]`/`[PROSPECT]`/`[VOICEMAIL/IVR]`/`[RECEPTIONIST]` |
 | 4.1 | `stages/transcript_judge.py` | GLM-4.7 with thinking verifies speaker labels are correct; catches global swaps ([SDR]↔[PROSPECT]) and individual turn mismatches; logs verdict + corrections to `logs/transcript_judge_feedback.jsonl` |
 | 4.5 | `stages/dm_discovery.py` | gpt-4o-mini analyzes cleaned transcripts to identify the actual decision-maker; fuzzy substring-matches back to contacts list; falls back to `contacts[0]` |
-| 5 | `stages/bantic_analysis.py` | gpt-4o-mini scores 6 BANTIC dimensions per call in parallel (0–3 each) via `ThreadPoolExecutor(max_workers=10)` |
-| 5.5 | `stages/final_judge.py` | GLM-4.7 with thinking reviews BANTIC scores for accuracy; revises only clearly wrong scores; logs verdict + changes to `logs/judge_feedback.jsonl` |
+| 5 | `stages/bantic_analysis.py` | gpt-4o-mini scores 6 BANTIC dimensions per call in parallel (0–3 each) via `ThreadPoolExecutor(max_workers=10)`; HubSpot/Nooks Call Notes are high-priority context when present |
+| 5.5 | `stages/final_judge.py` | GLM-4.7 with thinking reviews BANTIC scores for accuracy using transcript + Call Notes; revises only clearly wrong scores; logs verdict + changes to `logs/judge_feedback.jsonl` |
 | 6 | `stages/score_module.py` | Pure Python weighted score — no LLM (avoids hallucination in math) |
 | 7 | `stages/ae_brief_agent.py` | gpt-4o writes Markdown brief; `lib/html_generator.py` builds HTML dashboard |
 
@@ -81,6 +81,7 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **Trigger discovery**: `TriggerDiscoveryAgent` scans a rolling HubSpot lookback window and paginates search results, then reconciles candidates against `ae_handoff_runs`.
 - **Local watcher state is legacy**: `.watcher_state.json` and `stages/watcher.py` are compatibility leftovers. The active agentic runtime should not depend on them for correctness.
 - **Allowed analysis call set**: Stage 2 only includes `Meeting Scheduled`, `Callback High Intent`, `Callback Low Intent`, `Gave a Referral`, and `Connected` calls, and only up to the trigger call date.
+- **Call Notes**: Stage 2 fetches HubSpot Call Notes for trigger and history calls. Stage 5 treats notes as high-priority BANTIC context; Stage 5.5 sees the same notes so the judge does not undo notes-based scoring. Notes are persisted in `ae_handoff_run_calls.bantic_scores.call_notes` because there is no dedicated call-notes column.
 - **No-company trigger fallback**: if a trigger has no company association, the pipeline creates an `INDIVIDUAL` trigger-call-only journey instead of skipping it.
 - **DM confidence gating**: Stage 4.5 only updates `dm_contact` if confidence is `"high"` or `"medium"`; low-confidence results fall back to `contacts[0]`.
 - **HubSpot is the CRM source of truth**: company details, contacts, and associated calls come from HubSpot.

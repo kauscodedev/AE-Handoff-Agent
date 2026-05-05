@@ -1,6 +1,8 @@
 import os
 import logging
 import requests
+import re
+from html import unescape
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 from .types import Company, Contact
@@ -60,6 +62,26 @@ def get_call_company_id(call_id: str) -> Optional[str]:
         logger.error(f"Error fetching company association for call {call_id}: {e}")
         return None
 
+def _html_to_text(value: Optional[str]) -> Optional[str]:
+    """Convert HubSpot HTML-ish note fields into plain readable text."""
+    if not value:
+        return None
+    text = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
+    text = re.sub(r"</p\s*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = unescape(text)
+    lines = [line.strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line) or None
+
+def _clean_call_notes(value: Optional[str]) -> Optional[str]:
+    """Drop empty Nooks boilerplate while preserving real summaries."""
+    text = _html_to_text(value)
+    if not text:
+        return None
+    if text.strip().lower() in {"[nooks]", "nooks"}:
+        return None
+    return text
+
 def _format_call_details(call_id: str, props: Dict[str, Any], company_id: Optional[str] = None) -> Dict[str, Any]:
     """Normalize HubSpot call properties into the pipeline's call shape."""
     disp_id = props.get("hs_call_disposition")
@@ -67,6 +89,7 @@ def _format_call_details(call_id: str, props: Dict[str, Any], company_id: Option
     disp_label = mapping.get(disp_id) if disp_id else None
     owner_id = props.get("hubspot_owner_id")
     owner_name = get_owner_name(owner_id) if owner_id else None
+    call_notes = _clean_call_notes(props.get("hs_call_body")) or _clean_call_notes(props.get("hs_body_preview"))
 
     return {
         "hubspot_call_id": call_id,
@@ -78,6 +101,8 @@ def _format_call_details(call_id: str, props: Dict[str, Any], company_id: Option
         "call_outcome": disp_label,
         "call_disposition_label": disp_label,
         "recording_url": props.get("hs_call_recording_url"),
+        "call_notes": call_notes,
+        "call_notes_html": props.get("hs_call_body"),
     }
 
 def search_meeting_scheduled_calls(limit: int = 10, since_timestamp_ms: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -128,6 +153,8 @@ def search_meeting_scheduled_calls(limit: int = 10, since_timestamp_ms: Optional
                 "hs_call_title",
                 "hs_call_disposition",
                 "hs_call_recording_url",
+                "hs_call_body",
+                "hs_body_preview",
             ],
             "sorts": [
                 {
@@ -258,7 +285,15 @@ def get_call_details(call_id: str, company_id: Optional[str] = None) -> Optional
     try:
         url = f"{HUBSPOT_API_URL}/crm/v3/objects/calls/{call_id}"
         params = {
-            "properties": ["hs_timestamp", "hubspot_owner_id", "hs_call_title", "hs_call_disposition", "hs_call_recording_url"]
+            "properties": [
+                "hs_timestamp",
+                "hubspot_owner_id",
+                "hs_call_title",
+                "hs_call_disposition",
+                "hs_call_recording_url",
+                "hs_call_body",
+                "hs_body_preview",
+            ]
         }
         response = requests.get(url, headers=get_headers(), params=params)
         response.raise_for_status()

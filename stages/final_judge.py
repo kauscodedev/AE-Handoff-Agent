@@ -41,6 +41,8 @@ JUDGE_SYSTEM_PROMPT = """You are a senior B2B sales analyst reviewing BANTIC sco
 
 Your role: catch clear mistakes, not nitpick borderline calls. Be fair and give the original analysis the benefit of the doubt.
 
+The review prompt may include HubSpot/Nooks call notes. When notes are available, treat them as high-priority sales context for explicit qualification facts, and use the transcript to verify or enrich the evidence.
+
 BANTIC Scoring Scale:
 - 0 = Not discussed at all
 - 1 = Discussed but vague / prospect deflected
@@ -88,7 +90,7 @@ def _split_thinking(content: str) -> Tuple[str, str]:
     return thinking, answer
 
 
-def _format_score_for_review(call_id: str, score: BANTICScore, cleaned_transcript: str) -> str:
+def _format_score_for_review(call_id: str, score: BANTICScore, cleaned_transcript: str, call_notes: str = "") -> str:
     """Format the BANTIC score review request."""
     dimensions = [
         ("budget", score.score_budget, score.budget_evidence, score.budget_info_captured),
@@ -111,6 +113,9 @@ TRANSCRIPT:
 {cleaned_transcript[:2000]}
 ...
 
+CALL NOTES (HubSpot/Nooks summary, high-priority if available):
+{(call_notes or "No call notes available.")[:1200]}
+
 ORIGINAL ANALYSIS:
 {dims_text}
 
@@ -127,11 +132,13 @@ def _judge_call(call: Call, score: BANTICScore) -> Dict[str, Any]:
     Judge a single call's BANTIC scores using GLM-4.7 with thinking.
     Returns judgment dict with verdict, changes, and reasoning.
     """
-    if not call.cleaned_transcript:
-        return {"error": "No cleaned transcript available"}
+    call_notes = getattr(call, "call_notes", None)
+    if not call.cleaned_transcript and not call_notes:
+        return {"error": "No cleaned transcript or call notes available"}
+    transcript = call.cleaned_transcript or "No transcript available. Review against call notes only."
 
     # Format review request
-    review_prompt = _format_score_for_review(call.hubspot_call_id, score, call.cleaned_transcript)
+    review_prompt = _format_score_for_review(call.hubspot_call_id, score, transcript, call_notes or "")
 
     try:
         # Non-streaming call to GLM-4.7 (simpler for JSON parsing)

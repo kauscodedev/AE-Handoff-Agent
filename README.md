@@ -106,7 +106,7 @@ Ask about budget allocation for photo improvement. Clarify who approves the solu
 3. If the trigger call has a company association, Stage 2 fetches:
    - company details
    - all associated HubSpot contacts
-   - all associated HubSpot calls
+   - all associated HubSpot calls, including HubSpot/Nooks Call Notes when present
 4. Stage 2 narrows the analysis call set to:
    - `C - Meeting Scheduled`
    - `C - Callback High Intent`
@@ -114,20 +114,21 @@ Ask about budget allocation for photo improvement. Clarify who approves the solu
    - `C - Gave a Referral`
    - `Connected`
 5. If the trigger call has no associated company, the pipeline falls back to an `INDIVIDUAL` trigger-call-only run instead of skipping it.
-6. Deepgram transcribes recordings, OpenAI cleans speaker labels, NVIDIA judges labels and BANTIC, Python computes the weighted score, and OpenAI writes the final handoff brief.
+6. Deepgram transcribes recordings, OpenAI cleans speaker labels, OpenAI scores BANTIC with Call Notes as high-priority context when available, NVIDIA judges labels and BANTIC, Python computes the weighted score, and OpenAI writes the final handoff brief.
 7. Supabase stores the trigger lifecycle in `ae_handoff_runs` and per-call processing state in `ae_handoff_run_calls`.
 8. For company-backed runs, the final brief is written back to the HubSpot company property. For `INDIVIDUAL` runs, that HubSpot company update is skipped.
 
 ## Key Features
 
 - **Quality Gate**: Only generates briefs when BANTIC analysis exists (no hallucinated content)
-- **Evidence-Based**: Every claim cites verbatim transcript quotes
+- **Evidence-Based**: Claims use transcript evidence plus HubSpot/Nooks Call Notes when available
 - **No LLM Hallucination in Scoring**: Uses Python to calculate weighted scores
 - **Multi-Call Intelligence**: Finds best evidence across all company calls
 - **Ledger-Based Idempotency**: `ae_handoff_runs.trigger_call_id` + `status` is the source of truth for whether a trigger is done
 - **Rolling Reconciliation**: HubSpot trigger discovery scans a lookback window and paginates results, so late-arriving records do not disappear behind a cursor
 - **No-Company Fallback**: Trigger calls without a company can still generate an `INDIVIDUAL` handoff
 - **Run Tracking**: Stores run-level and call-level pipeline state in `ae_handoff_runs` and `ae_handoff_run_calls`
+- **Call Notes Aware**: Stores fetched Call Notes inside `ae_handoff_run_calls.bantic_scores.call_notes` and uses them during BANTIC analysis/judging
 - **Standalone**: Separate from call-scoring-agent; uses same API keys
 
 ## File Structure
