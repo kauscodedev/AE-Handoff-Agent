@@ -32,9 +32,21 @@ python3 orchestrator.py --once
 # Run judge smoke tests (no pytest needed — standalone scripts)
 python3 test_judge.py
 python3 test_transcript_judge.py
+
+# Dev monitoring dashboard (Flask, port 8000; requires 'flask' package)
+pip install flask
+python3 dashboard_app.py
 ```
 
-Scratch utilities (not part of the pipeline):
+Development utilities (not part of the pipeline):
+
+**Root-level scripts:**
+- `check_pending.py` — queries Supabase `calls` table for `ae_brief_sent = False` rows; prints backlog count + first 6 call IDs
+- `test_hubspot_brief.py` — manually fires `update_company_property()` against a hardcoded company ID (HubSpot write-back integration test)
+- `verify_hubspot_brief.py` — reads `ae_handoff_brief` property from HubSpot for the same hardcoded company; confirms brief was persisted
+- `dashboard_app.py` — Flask dev dashboard monitoring orchestrator progress; parses `orchestrator.log` and queries Supabase; serves at http://localhost:8000. Note: `flask` is not in `requirements.txt`; install separately with `pip install flask`.
+
+**Scratch utilities:**
 - `scratch/test_supabase.py` — verify Supabase connectivity
 - `scratch/debug_fetch.py` — inspect Stage 2 fetch output
 - `scratch/reset_flags.py` — reset `ae_brief_sent = False` to re-process rows
@@ -47,9 +59,10 @@ The live runtime is coordinated through `agents/`, not the old local watcher cur
 | Agent | File | What it owns |
 |---|---|---|
 | CoordinatorAgent | `agents/coordinator.py` | Top-level loop; asks discovery for work, claims triggers, delegates execution, records final state |
-| TriggerDiscoveryAgent | `agents/discovery_agent.py` | Paginated HubSpot `C - Meeting Scheduled` reconciliation over a rolling lookback window |
+| TriggerDiscoveryAgent | `agents/discovery_agent.py` | Reconciles HubSpot `C - Meeting Scheduled` calls via 48-hour rolling lookback window (limit=500); filters by ledger `should_process()` |
 | RunLedgerAgent | `agents/ledger_agent.py` | Durable idempotency and claiming via `ae_handoff_runs.trigger_call_id + status` |
 | HandoffPipelineAgent | `agents/pipeline_agent.py` | Executes the specialist stage chain for one claimed trigger |
+| Contracts | `agents/contracts.py` | Shared frozen dataclasses: `TriggerCandidate` (HubSpot trigger record), `AgentResult` (agent response envelope) |
 
 Specialist stages execute sequentially per trigger; Stage 5 (BANTIC scoring) runs calls in parallel via `ThreadPoolExecutor`.
 
@@ -69,7 +82,7 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 
 ## Key Behaviours to Know
 
-- **Operating hours gate**: orchestrator only polls during **17:00–04:00 IST**; outside that window it sleeps until 17:00. Use `--once` to bypass for testing.
+- **Operating hours gate**: orchestrator only runs `coordinator.run_once()` during **17:00–04:00 IST**; outside that window it polls every 60 seconds (no agent work, just rechecking time). Use `--once` to bypass for testing.
 - **Primary idempotency**: `ae_handoff_runs.trigger_call_id + status` is the source of truth. Completed runs are skipped even if legacy `calls` rows are missing or stale.
 - **Compatibility marker**: `calls.ae_brief_sent` is still written for old tooling and transcript/cache reuse, but it must not be treated as the primary trigger ledger.
 - **`journey.calls` are raw dicts**: `CompanyJourney.calls` is a list of plain dicts (from HubSpot/Supabase), not `Call` objects. The orchestrator builds `Call` objects from them before Stages 3–7.
@@ -79,6 +92,7 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stages 4.1 and 5.5 use GLM-4.7 via NVIDIA API (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
 - **PID lockfile**: orchestrator writes `/tmp/ae_handoff_orchestrator.lock` on startup to prevent duplicate instances.
 - **Trigger discovery**: `TriggerDiscoveryAgent` scans a rolling HubSpot lookback window and paginates search results, then reconciles candidates against `ae_handoff_runs`.
+- **Run status lifecycle**: `ae_handoff_runs.status` flows as `discovered → processing → completed` or `failed`. Failed runs are automatically retried on the next coordinator tick.
 - **Local watcher state is legacy**: `.watcher_state.json` and `stages/watcher.py` are compatibility leftovers. The active agentic runtime should not depend on them for correctness.
 - **Allowed analysis call set**: Stage 2 only includes `Meeting Scheduled`, `Callback High Intent`, `Callback Low Intent`, `Gave a Referral`, and `Connected` calls, and only up to the trigger call date.
 - **Call Notes**: Stage 2 fetches HubSpot Call Notes for trigger and history calls. Stage 5 treats notes as high-priority BANTIC context; Stage 5.5 sees the same notes so the judge does not undo notes-based scoring. Notes are persisted in `ae_handoff_run_calls.bantic_scores.call_notes` because there is no dedicated call-notes column.
@@ -98,7 +112,8 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 ## Outputs
 
 - `handoffs/<Company>_handoff.md` — Markdown brief (5 sections: ICP Fit, Current Process, Evaluating Tools, Pain/Need, Next Steps). Note: Path is hardcoded to `/Users/kaustubhchauhan/ae-handoff-brief-agent/handoffs/` in `ae_brief_agent.py`.
-- `dashboards/<Company>_dashboard.html` — Standalone dark-theme HTML dashboard (self-contained; auto-created relative to project root).
+- `dashboards/<Company>_dashboard.html` — Standalone warm-theme HTML dashboard (self-contained; auto-created relative to project root).
+- HubSpot company property `ae_handoff_brief` — brief text written back to HubSpot via `update_company_property()` for non-INDIVIDUAL runs.
 - `logs/orchestrator.log` — Structured log output.
 - `logs/judge_feedback.jsonl` — Per-run BANTIC judge verdicts (original vs final scores, thinking snippet, reasons for revision).
 - `logs/transcript_judge_feedback.jsonl` — Per-run transcript judge verdicts (corrections applied, thinking snippet).
