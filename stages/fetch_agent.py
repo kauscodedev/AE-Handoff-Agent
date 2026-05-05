@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from lib.hubspot_client import get_company, get_company_contacts, get_company_calls, get_call_details
-from lib.supabase_client import get_calls_for_company, upsert_call
+from lib.supabase_client import get_calls_for_company, upsert_call, upsert_company
 from lib.types import Company, Contact, Call, CompanyJourney
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,11 @@ def fetch_company_journey(company_id: str, trigger_call_id: str) -> Optional[Com
         if not company:
             logger.error(f"✗ Could not fetch company {company_id}")
             return None
+        upsert_company({
+            "hubspot_company_id": company.hubspot_id,
+            "company_name": company.name,
+            "is_active": True,
+        })
 
         # 2. Fetch Contacts
         contacts = get_company_contacts(company_id)

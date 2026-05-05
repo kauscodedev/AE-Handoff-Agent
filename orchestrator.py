@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-AE Handoff Brief Agent — Orchestrator
-10-Stage Pipeline (with Stage 4.1, 4.5, and 5.5):
-1. HubSpot Watcher — polls for "C - Meeting Scheduled" calls
-2. Fetch Agent — gets company + contacts + call data
-3. Transcription — submits to Deepgram Nova-3
-4. Clean Transcript — labels speakers with OpenAI
-4.1. Transcript Judge — GLM-4.7 verifies speaker labels, corrects if wrong
-4.5. DM Discovery — identifies decision maker from transcripts
-5. BANTIC Analysis — scores on 6 dimensions with OpenAI
-5.5. Final Judge — GLM-4.7 reviews BANTIC scores, revises if clearly wrong
-6. Score Module — calculates weighted score (Python, no LLM)
-7. AE Brief Agent — generates handoff brief with OpenAI
+AE Handoff Brief Agent — Agentic Runtime
 
-All data persists to Supabase at each stage.
-PID lockfile prevents duplicate instances.
+CoordinatorAgent owns the durable loop:
+1. TriggerDiscoveryAgent reconciles HubSpot Meeting Scheduled calls.
+2. RunLedgerAgent claims work in ae_handoff_runs and enforces idempotency.
+3. HandoffPipelineAgent delegates to specialist stage agents:
+   fetch, transcription, transcript cleaning, judges, DM discovery, BANTIC,
+   deterministic scoring, and AE brief generation.
+
+HubSpot is the CRM source of truth. ae_handoff_runs is the processing ledger.
+The legacy calls table is only a cache/compatibility store for transcripts,
+analysis artifacts, and ae_brief_sent markers.
 """
 
 import os
@@ -27,8 +24,12 @@ from pathlib import Path
 from typing import Dict, Any
 from dotenv import load_dotenv
 
+from agents.coordinator import CoordinatorAgent
+from agents.discovery_agent import TriggerDiscoveryAgent
+from agents.ledger_agent import RunLedgerAgent
+from agents.pipeline_agent import HandoffPipelineAgent
+
 # Stages
-from stages.watcher import watch_for_meeting_scheduled
 from stages.fetch_agent import fetch_company_journey
 from stages.transcription import transcribe_calls
 from stages.clean_transcript import clean_calls
@@ -191,6 +192,7 @@ LOCK_FILE = "/tmp/ae_handoff_orchestrator.lock"
 IST = timezone(timedelta(hours=5, minutes=30))
 OPERATING_START_HOUR = 17   # 5pm IST
 OPERATING_END_HOUR = 4      # 4am IST (next calendar day)
+MAX_OUTSIDE_HOURS_SLEEP_SECONDS = 60
 
 def is_within_operating_hours() -> bool:
     """Check if current time is within operating hours (17:00–04:00 IST)."""
@@ -433,6 +435,12 @@ def run_orchestrator(interval: int = 60):
     """
     logger.info(f"Starting orchestrator loop (interval: {interval}s)")
     logger.info("Operating hours: 17:00–04:00 IST daily")
+    ledger = RunLedgerAgent()
+    coordinator = CoordinatorAgent(
+        discovery=TriggerDiscoveryAgent(ledger=ledger, lookback_hours=48, limit=500),
+        ledger=ledger,
+        pipeline=HandoffPipelineAgent(process_trigger=process_company),
+    )
 
     while True:
         try:
@@ -440,23 +448,16 @@ def run_orchestrator(interval: int = 60):
             if not is_within_operating_hours():
                 wait = seconds_until_window_opens()
                 h, m = divmod(wait // 60, 60)
-                logger.info(f"Outside operating hours. Sleeping {h}h {m}m until 17:00 IST...")
-                time.sleep(wait)
+                sleep_for = min(wait, MAX_OUTSIDE_HOURS_SLEEP_SECONDS)
+                logger.info(
+                    f"Outside operating hours. Window opens in {h}h {m}m; "
+                    f"rechecking in {sleep_for}s..."
+                )
+                time.sleep(sleep_for)
                 continue
 
-            # Stage 1: HubSpot Watcher
-            logger.info(f"\n[{datetime.now(timezone.utc).isoformat()}] Checking for pending calls...")
-            pending_calls = watch_for_meeting_scheduled(limit=10)
-
-            if pending_calls:
-                logger.info(f"✓ Found {len(pending_calls)} pending calls")
-                for call_data in pending_calls:
-                    hubspot_call_id = call_data["hubspot_call_id"]
-                    company_id = call_data["hubspot_company_id"]
-                    process_company(company_id, hubspot_call_id)
-                    time.sleep(2)  # Brief pause between companies
-            else:
-                logger.info("No pending calls found")
+            result = coordinator.run_once()
+            logger.info(f"Coordinator result: {result.message}")
 
             logger.info(f"Next check in {interval}s...\n")
             time.sleep(interval)
@@ -485,14 +486,15 @@ if __name__ == "__main__":
     if args.once:
         logger.info("Running orchestrator once...")
         try:
-            pending_calls = watch_for_meeting_scheduled(limit=10)
-            if pending_calls:
-                logger.info(f"Found {len(pending_calls)} pending calls")
-                for call_data in pending_calls:
-                    hubspot_call_id = call_data["hubspot_call_id"]
-                    company_id = call_data["hubspot_company_id"]
-                    process_company(company_id, hubspot_call_id)
-                    time.sleep(1)
+            ledger = RunLedgerAgent()
+            coordinator = CoordinatorAgent(
+                discovery=TriggerDiscoveryAgent(ledger=ledger, lookback_hours=48, limit=500),
+                ledger=ledger,
+                pipeline=HandoffPipelineAgent(process_trigger=process_company),
+                pause_between_triggers_seconds=1,
+            )
+            result = coordinator.run_once()
+            logger.info(f"Coordinator result: {result.message}")
         except Exception as e:
             logger.error(f"Error: {e}", exc_info=True)
     else:

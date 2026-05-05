@@ -104,6 +104,7 @@ def search_meeting_scheduled_calls(limit: int = 10, since_timestamp_ms: Optional
         else:
             since_ms = since_timestamp_ms
         url = f"{HUBSPOT_API_URL}/crm/v3/objects/calls/search"
+        page_limit = min(limit, 100)
         payload = {
             "filterGroups": [
                 {
@@ -134,26 +135,41 @@ def search_meeting_scheduled_calls(limit: int = 10, since_timestamp_ms: Optional
                     "direction": "DESCENDING",
                 }
             ],
-            "limit": min(limit, 100),
+            "limit": page_limit,
         }
-        response = requests.post(url, headers=get_headers(), json=payload)
-        response.raise_for_status()
 
         calls = []
-        for item in response.json().get("results", []):
-            call_id = item.get("id")
-            if not call_id:
-                continue
+        after = None
+        while len(calls) < limit:
+            if after:
+                payload["after"] = after
+            else:
+                payload.pop("after", None)
 
-            company_id = get_call_company_id(call_id)
-            if not company_id:
-                logger.warning(
-                    f"Meeting Scheduled call {call_id} has no associated company; "
-                    "falling back to trigger-call-only processing"
-                )
-                company_id = "INDIVIDUAL"
+            response = requests.post(url, headers=get_headers(), json=payload)
+            response.raise_for_status()
+            body = response.json()
 
-            calls.append(_format_call_details(call_id, item.get("properties", {}), company_id))
+            for item in body.get("results", []):
+                call_id = item.get("id")
+                if not call_id:
+                    continue
+
+                company_id = get_call_company_id(call_id)
+                if not company_id:
+                    logger.warning(
+                        f"Meeting Scheduled call {call_id} has no associated company; "
+                        "falling back to trigger-call-only processing"
+                    )
+                    company_id = "INDIVIDUAL"
+
+                calls.append(_format_call_details(call_id, item.get("properties", {}), company_id))
+                if len(calls) >= limit:
+                    break
+
+            after = body.get("paging", {}).get("next", {}).get("after")
+            if not after:
+                break
 
         return calls
     except Exception as e:

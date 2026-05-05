@@ -93,6 +93,16 @@ def upsert_call(call_data: dict) -> bool:
         logger.error(f"Error upserting call {call_data.get('hubspot_call_id')}: {e}")
         return False
 
+def upsert_company(company_data: dict) -> bool:
+    """Upsert minimal company data so call rows satisfy the company FK."""
+    try:
+        supabase = get_supabase()
+        supabase.table("companies").upsert(company_data, on_conflict="hubspot_company_id").execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error upserting company {company_data.get('hubspot_company_id')}: {e}")
+        return False
+
 def update_call_fields(hubspot_call_id: str, fields: dict) -> bool:
     """Update any fields on a call row by call ID."""
     try:

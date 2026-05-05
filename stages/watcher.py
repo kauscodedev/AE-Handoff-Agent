@@ -1,12 +1,13 @@
 import logging
 import json
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from lib.hubspot_client import search_meeting_scheduled_calls
 from lib.supabase_client import get_sent_handoff_call_ids
 
 logger = logging.getLogger(__name__)
 WATCHER_STATE_FILE = Path(".watcher_state.json")
+WATCHER_LOOKBACK = timedelta(hours=24)
 
 def _load_last_watcher_run_ms() -> int:
     """Load the last watcher run timestamp (ms) or return 0 if not found."""
@@ -34,7 +35,7 @@ def watch_for_meeting_scheduled(limit: int = 10) -> list:
     """
     Stage 1: HubSpot Watcher
     Polls HubSpot directly for calls where `hs_call_disposition` = "C - Meeting Scheduled",
-    only fetching calls created AFTER the last successful watcher run.
+    fetching an overlapping lookback window from the last successful watcher run.
     Then skips calls already marked `ae_brief_sent = True` in Supabase.
 
     Returns: List of pending calls to process
@@ -42,8 +43,10 @@ def watch_for_meeting_scheduled(limit: int = 10) -> list:
     try:
         last_run_ms = _load_last_watcher_run_ms()
         current_run_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        lookback_ms = int(WATCHER_LOOKBACK.total_seconds() * 1000)
+        since_ms = max(0, last_run_ms - lookback_ms) if last_run_ms > 0 else None
 
-        calls = search_meeting_scheduled_calls(limit=limit, since_timestamp_ms=last_run_ms if last_run_ms > 0 else None)
+        calls = search_meeting_scheduled_calls(limit=limit, since_timestamp_ms=since_ms)
         sent_call_ids = get_sent_handoff_call_ids([call["hubspot_call_id"] for call in calls])
         pending_calls = [
             call for call in calls
@@ -51,9 +54,12 @@ def watch_for_meeting_scheduled(limit: int = 10) -> list:
         ]
 
         if pending_calls:
-            logger.info(f"✓ Watcher found {len(pending_calls)} NEW Meeting Scheduled calls in HubSpot since last run")
+            logger.info(
+                f"✓ Watcher found {len(pending_calls)} pending Meeting Scheduled calls "
+                f"in HubSpot within the rolling {WATCHER_LOOKBACK} window"
+            )
         else:
-            logger.debug("No new Meeting Scheduled calls found since last run")
+            logger.debug("No pending Meeting Scheduled calls found in rolling lookback window")
 
         # Update watcher state with current timestamp for next run
         _save_last_watcher_run_ms(current_run_ms)

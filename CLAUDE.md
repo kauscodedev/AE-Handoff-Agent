@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Python 3 multi-agent pipeline that automatically generates Account Executive handoff briefs after sales calls. When a call is marked "C - Meeting Scheduled" in HubSpot, the pipeline transcribes the recording, scores it on 6 BANTIC dimensions, and produces a Markdown brief + HTML dashboard for the AE taking over the deal.
+A Python 3 agentic handoff system that automatically generates Account Executive handoff briefs after sales calls. When a call is marked "C - Meeting Scheduled" in HubSpot, a CoordinatorAgent reconciles HubSpot against a durable Supabase run ledger, claims pending trigger work, delegates specialist sub-agents for context/transcription/analysis/judging/briefing, and produces a Markdown brief + HTML dashboard for the AE taking over the deal.
 
 ## Setup
 
@@ -40,13 +40,21 @@ Scratch utilities (not part of the pipeline):
 - `scratch/reset_flags.py` — reset `ae_brief_sent = False` to re-process rows
 - `scratch/test_operating_hours.py` — verify IST operating window logic (17:00–04:00 IST)
 
-## Pipeline Architecture (9 Stages)
+## Agentic Runtime Architecture
 
-Each stage is a module in `stages/`. They execute sequentially per company; Stage 5 (BANTIC scoring) runs calls in parallel via `ThreadPoolExecutor`.
+The live runtime is coordinated through `agents/`, not the old local watcher cursor. The specialist stage modules in `stages/` still do the actual domain work, but they are now delegated behind a durable coordinator/ledger spine.
+
+| Agent | File | What it owns |
+|---|---|---|
+| CoordinatorAgent | `agents/coordinator.py` | Top-level loop; asks discovery for work, claims triggers, delegates execution, records final state |
+| TriggerDiscoveryAgent | `agents/discovery_agent.py` | Paginated HubSpot `C - Meeting Scheduled` reconciliation over a rolling lookback window |
+| RunLedgerAgent | `agents/ledger_agent.py` | Durable idempotency and claiming via `ae_handoff_runs.trigger_call_id + status` |
+| HandoffPipelineAgent | `agents/pipeline_agent.py` | Executes the specialist stage chain for one claimed trigger |
+
+Specialist stages execute sequentially per trigger; Stage 5 (BANTIC scoring) runs calls in parallel via `ThreadPoolExecutor`.
 
 | Stage | File | What it does |
 |---|---|---|
-| 1 | `stages/watcher.py` | Searches HubSpot directly for new "C - Meeting Scheduled" calls since the last watcher run, including activity date, assigned owner, call outcome, recording URL, and associated company; if no company exists, falls back to `INDIVIDUAL`; skips trigger calls already briefed in Supabase |
 | 2 | `stages/fetch_agent.py` | Fetches company/contact/call data from HubSpot; narrows analysis calls to `C - Meeting Scheduled`, `C - Callback High Intent`, `C - Callback Low Intent`, `C - Gave a Referral`, and `Connected`; merges in stored transcript/analysis state from Supabase |
 | 3 | `stages/transcription.py` | Submits recording URL to Deepgram Nova-3 (synchronous STT + diarization via REST API) |
 | 4 | `stages/clean_transcript.py` | gpt-4o-mini relabels Speaker 0/1 → `[SDR]`/`[PROSPECT]`/`[VOICEMAIL/IVR]`/`[RECEPTIONIST]` |
@@ -62,18 +70,22 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 ## Key Behaviours to Know
 
 - **Operating hours gate**: orchestrator only polls during **17:00–04:00 IST**; outside that window it sleeps until 17:00. Use `--once` to bypass for testing.
-- **Idempotent**: the `ae_brief_sent` flag in Supabase prevents re-processing. Use `scratch/reset_flags.py` to re-run.
+- **Primary idempotency**: `ae_handoff_runs.trigger_call_id + status` is the source of truth. Completed runs are skipped even if legacy `calls` rows are missing or stale.
+- **Compatibility marker**: `calls.ae_brief_sent` is still written for old tooling and transcript/cache reuse, but it must not be treated as the primary trigger ledger.
 - **`journey.calls` are raw dicts**: `CompanyJourney.calls` is a list of plain dicts (from HubSpot/Supabase), not `Call` objects. The orchestrator builds `Call` objects from them before Stages 3–7.
 - **Transcript reuse**: if `raw_transcript` already exists in the Supabase row, Stage 3 is skipped.
 - **Best score wins**: Stage 6 takes the highest per-dimension score across all calls for a company, not the average.
 - **Score formula** (Stage 6, `score_module.py`): `(B×5 + A×20 + N×25 + T×15 + I×15 + CP×20) / 30`. Tier mapping: ≥8.1 = "Very High Intent", 8.0 = "High Intent", 5.0–7.9 = "Qualified", <5.0 = "Disqualified".
 - **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stages 4.1 and 5.5 use GLM-4.7 via NVIDIA API (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
 - **PID lockfile**: orchestrator writes `/tmp/ae_handoff_orchestrator.lock` on startup to prevent duplicate instances.
-- **Watcher incremental fetch**: Stage 1 tracks the last successful watcher run in `.watcher_state.json` and only fetches HubSpot calls created after that UTC timestamp. This prevents re-processing the same historical calls on every run.
+- **Trigger discovery**: `TriggerDiscoveryAgent` scans a rolling HubSpot lookback window and paginates search results, then reconciles candidates against `ae_handoff_runs`.
+- **Local watcher state is legacy**: `.watcher_state.json` and `stages/watcher.py` are compatibility leftovers. The active agentic runtime should not depend on them for correctness.
 - **Allowed analysis call set**: Stage 2 only includes `Meeting Scheduled`, `Callback High Intent`, `Callback Low Intent`, `Gave a Referral`, and `Connected` calls, and only up to the trigger call date.
 - **No-company trigger fallback**: if a trigger has no company association, the pipeline creates an `INDIVIDUAL` trigger-call-only journey instead of skipping it.
 - **DM confidence gating**: Stage 4.5 only updates `dm_contact` if confidence is `"high"` or `"medium"`; low-confidence results fall back to `contacts[0]`.
-- **HubSpot is the runtime fetch source of truth**: company details, contacts, and associated calls come from HubSpot; Supabase is used for persistence, transcript reuse, analysis state, idempotency, and run tracking.
+- **HubSpot is the CRM source of truth**: company details, contacts, and associated calls come from HubSpot.
+- **Supabase run tables are the processing source of truth**: `ae_handoff_runs` and `ae_handoff_run_calls` own lifecycle/audit state. The legacy `calls` table is a cache/compatibility store for transcripts, analysis artifacts, and `ae_brief_sent`.
+- **Companies table is not business source of truth**: it is only upserted because the legacy `calls` table has a foreign key on `hubspot_company_id`; it should not block trigger discovery or idempotency.
 - **BANTIC analysis status**: Stage 5 writes `analysis_status = "completed"`; Supabase rejects `"complete"` via `calls_analysis_status_check`.
 - **NVIDIA judge timeouts**: Stages 4.1 and 5.5 set 30-second request timeouts for NVIDIA GLM-4.7 calls; judge failures log as warnings and the pipeline continues (judges are non-critical — they only revise clearly wrong scores).
 - **Run tracking**: the orchestrator writes `ae_handoff_runs` and `ae_handoff_run_calls` throughout the run so brief generation can be audited at trigger and call level.
