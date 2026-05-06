@@ -126,7 +126,6 @@ def _format_qualification_summary(score_result: Optional[Dict[str, Any]]) -> str
     weighted_score = score_result.get("weighted_score", "UNKNOWN")
     tier = score_result.get("qualification_tier", "UNKNOWN")
     calls_analyzed = score_result.get("num_calls_analyzed", "UNKNOWN")
-    snapshot_table = score_result.get("bantic_snapshot_markdown") or score_result.get("dimensions_table") or ""
     dimensions = (score_result.get("bantic_snapshot") or {}).get("dimensions", [])
     strongest = max(dimensions, key=lambda item: item.get("score") or 0, default={})
     gaps = [item for item in dimensions if (item.get("score") or 0) < 3]
@@ -144,15 +143,24 @@ def _format_qualification_summary(score_result: Optional[Dict[str, Any]]) -> str
             f"({biggest_gap.get('score', 0)}/3): {biggest_gap.get('gap_or_follow_up') or 'UNKNOWN'}"
         )
 
-    return (
-        "## Qualification Summary\n"
-        f"- Overall Score: {weighted_score}/10 ({tier})\n"
-        f"- Calls Analyzed: {calls_analyzed}\n\n"
-        f"- Strongest Buying Signal: {strongest_line}\n"
-        f"- Biggest AE Follow-up Gap: {gap_line}\n\n"
-        "## BANTIC Qualification Snapshot\n"
-        f"{snapshot_table}\n"
-    )
+    lines = [
+        "QUALIFICATION SUMMARY",
+        f"Overall Score: {weighted_score}/10 ({tier})",
+        f"Calls Analyzed: {calls_analyzed}",
+        f"Strongest Buying Signal: {strongest_line}",
+        f"Biggest AE Follow-up Gap: {gap_line}",
+        "",
+        "BANTIC QUALIFICATION SNAPSHOT",
+    ]
+    for item in dimensions:
+        lines.extend([
+            f"{item.get('dimension', 'UNKNOWN')} - {item.get('score', 0)}/3",
+            f"Evidence: {item.get('evidence') or 'UNKNOWN'}",
+            f"Info Captured: {item.get('info_captured') or 'UNKNOWN'}",
+            f"AE Follow-up Gap: {item.get('gap_or_follow_up') or 'UNKNOWN'}",
+            "",
+        ])
+    return "\n".join(lines).rstrip() + "\n\n"
 
 
 def save_brief(
@@ -164,14 +172,14 @@ def save_brief(
 ) -> bool:
     """Save brief sections to local .md file, update HubSpot company property, and mark as sent in Supabase."""
     try:
-        # Build markdown content from sections
-        markdown_content = f"# {company_name} Handoff Brief\n\n"
+        # HubSpot renders this property as plain text, so avoid markdown tables/headings.
+        markdown_content = f"{company_name} Handoff Brief\n\n"
         markdown_content += _format_qualification_summary(score_result)
-        markdown_content += f"## ICP Fit\n{brief_sections.get('icp_fit', 'N/A')}\n\n"
-        markdown_content += f"## Current Process\n{brief_sections.get('current_process', 'N/A')}\n\n"
-        markdown_content += f"## Evaluating Tools\n{brief_sections.get('evaluating_tools', 'N/A')}\n\n"
-        markdown_content += f"## Pain / Need\n{brief_sections.get('pain_need', 'N/A')}\n\n"
-        markdown_content += f"## Recommended Next Steps\n{brief_sections.get('next_steps', 'N/A')}\n"
+        markdown_content += f"ICP FIT\n{brief_sections.get('icp_fit', 'N/A')}\n\n"
+        markdown_content += f"CURRENT PROCESS\n{brief_sections.get('current_process', 'N/A')}\n\n"
+        markdown_content += f"EVALUATING TOOLS\n{brief_sections.get('evaluating_tools', 'N/A')}\n\n"
+        markdown_content += f"PAIN / NEED\n{brief_sections.get('pain_need', 'N/A')}\n\n"
+        markdown_content += f"RECOMMENDED NEXT STEPS\n{brief_sections.get('next_steps', 'N/A')}\n"
 
         # Sanitize company name for filename
         safe_name = company_name.replace("/", "_").replace(" ", "_")
