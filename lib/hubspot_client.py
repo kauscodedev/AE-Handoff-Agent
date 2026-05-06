@@ -2,6 +2,7 @@ import os
 import logging
 import requests
 import re
+import time
 from html import unescape
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
@@ -11,6 +12,11 @@ logger = logging.getLogger(__name__)
 
 HUBSPOT_API_URL = "https://api.hubapi.com"
 HUBSPOT_REQUEST_TIMEOUT = 30
+HUBSPOT_ASSOCIATION_RETRIES = int(os.getenv("HUBSPOT_ASSOCIATION_RETRIES", "3"))
+
+
+class HubSpotAssociationLookupError(RuntimeError):
+    """Raised when HubSpot association lookup failed rather than returned empty."""
 
 def get_headers():
     token = os.getenv("HUBSPOT_TOKEN")
@@ -51,17 +57,42 @@ def get_disposition_id_by_label(label: str) -> Optional[str]:
 
 def get_call_company_id(call_id: str) -> Optional[str]:
     """Fetch the first company associated with a HubSpot call."""
-    try:
-        url = f"{HUBSPOT_API_URL}/crm/v3/objects/calls/{call_id}/associations/companies"
-        response = requests.get(url, headers=get_headers(), timeout=HUBSPOT_REQUEST_TIMEOUT)
-        response.raise_for_status()
-        results = response.json().get("results", [])
-        if not results:
-            return None
-        return results[0].get("id")
-    except Exception as e:
-        logger.error(f"Error fetching company association for call {call_id}: {e}")
-        return None
+    url = f"{HUBSPOT_API_URL}/crm/v3/objects/calls/{call_id}/associations/companies"
+    last_error = None
+    for attempt in range(1, HUBSPOT_ASSOCIATION_RETRIES + 1):
+        try:
+            response = requests.get(url, headers=get_headers(), timeout=HUBSPOT_REQUEST_TIMEOUT)
+            response.raise_for_status()
+            results = response.json().get("results", [])
+            if not results:
+                return None
+            return results[0].get("id")
+        except requests.RequestException as e:
+            last_error = e
+            logger.warning(
+                "HubSpot company association lookup failed for call %s (attempt %s/%s): %s",
+                call_id,
+                attempt,
+                HUBSPOT_ASSOCIATION_RETRIES,
+                e,
+            )
+            if attempt < HUBSPOT_ASSOCIATION_RETRIES:
+                time.sleep(min(attempt * 2, 5))
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "HubSpot company association lookup failed for call %s (attempt %s/%s): %s",
+                call_id,
+                attempt,
+                HUBSPOT_ASSOCIATION_RETRIES,
+                e,
+            )
+            if attempt < HUBSPOT_ASSOCIATION_RETRIES:
+                time.sleep(min(attempt * 2, 5))
+
+    raise HubSpotAssociationLookupError(
+        f"Could not verify company association for call {call_id}: {last_error}"
+    )
 
 def _html_to_text(value: Optional[str]) -> Optional[str]:
     """Convert HubSpot HTML-ish note fields into plain readable text."""
@@ -193,7 +224,16 @@ def search_meeting_scheduled_calls(limit: int = 10, since_timestamp_ms: Optional
                 if not call_id:
                     continue
 
-                company_id = get_call_company_id(call_id)
+                try:
+                    company_id = get_call_company_id(call_id)
+                except HubSpotAssociationLookupError as e:
+                    logger.warning(
+                        "Skipping Meeting Scheduled call %s for this discovery tick because "
+                        "company association could not be verified: %s",
+                        call_id,
+                        e,
+                    )
+                    continue
                 if not company_id:
                     logger.warning(
                         f"Meeting Scheduled call {call_id} has no associated company; "
