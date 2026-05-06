@@ -76,6 +76,22 @@ def _json_safe(value: Any) -> Any:
         return {key: _json_safe(item) for key, item in value.items()}
     return value
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _heartbeat_run(run_id: str, stage: str) -> None:
+    """Keep ae_handoff_runs fresh so stale-run recovery can distinguish live work."""
+    if not run_id:
+        return
+    now = _utc_now_iso()
+    update_ae_handoff_run(run_id, {
+        "updated_at": now,
+        "metadata": {
+            "heartbeat_stage": stage,
+            "heartbeat_at": now,
+        },
+    })
+
 def _build_run_contacts(contacts) -> list:
     return [
         {
@@ -310,14 +326,20 @@ def process_company(company_id: str, hubspot_call_id: str):
             "contacts": _build_run_contacts(journey.contacts),
             "sdr_name": journey.sdr_name,
             "scheduled_meeting_time": _call_dt_to_iso(journey.scheduled_meeting_time),
+            "completed_at": None,
+            "error_message": None,
+            "updated_at": _utc_now_iso(),
         })
 
         if run_id:
+            _heartbeat_run(run_id, "stage_2_fetch_complete")
             for call, call_data in calls_to_process:
                 upsert_ae_handoff_run_call(_build_run_call_payload(run_id, call, call_data))
 
         # Stage 3: Transcription
         logger.info("\n→ Processing transcriptions...")
+        if run_id:
+            _heartbeat_run(run_id, "stage_3_transcription_started")
         transcribed_calls = []
         for call, call_data in calls_to_process:
             if call_data.get("raw_transcript"):
@@ -345,11 +367,19 @@ def process_company(company_id: str, hubspot_call_id: str):
         if not transcribed_calls:
             logger.warning("  No transcripts available")
             if run_id:
-                update_ae_handoff_run(run_id, {"status": "failed", "error_message": "No transcripts available"})
+                now = _utc_now_iso()
+                update_ae_handoff_run(run_id, {
+                    "status": "failed",
+                    "error_message": "No transcripts available",
+                    "completed_at": now,
+                    "updated_at": now,
+                })
             return False
 
         # Stage 4: Clean Transcripts
         logger.info("\n→ Cleaning transcripts...")
+        if run_id:
+            _heartbeat_run(run_id, "stage_4_cleaning_started")
         prospect_name = journey.dm_contact.name if journey.dm_contact else "Prospect"
         cleaned_calls_list = clean_calls(
             transcribed_calls, 
@@ -361,7 +391,13 @@ def process_company(company_id: str, hubspot_call_id: str):
         if not cleaned_calls_list:
             logger.warning("  No transcripts cleaned")
             if run_id:
-                update_ae_handoff_run(run_id, {"status": "failed", "error_message": "No transcripts cleaned"})
+                now = _utc_now_iso()
+                update_ae_handoff_run(run_id, {
+                    "status": "failed",
+                    "error_message": "No transcripts cleaned",
+                    "completed_at": now,
+                    "updated_at": now,
+                })
             return False
 
         if run_id:
@@ -371,6 +407,8 @@ def process_company(company_id: str, hubspot_call_id: str):
 
         # Stage 4.1: Transcript Judge
         logger.info("\n→ Reviewing speaker labels...")
+        if run_id:
+            _heartbeat_run(run_id, "stage_4_1_transcript_judge_started")
         cleaned_calls_list = judge_transcripts(cleaned_calls_list)
         if run_id:
             for call in cleaned_calls_list:
@@ -379,6 +417,8 @@ def process_company(company_id: str, hubspot_call_id: str):
 
         # Stage 4.5: DM Discovery from transcripts
         logger.info("\n→ Discovering decision maker...")
+        if run_id:
+            _heartbeat_run(run_id, "stage_4_5_dm_discovery_started")
         discover_dm(journey, cleaned_calls_list)
         if run_id:
             update_ae_handoff_run(run_id, {
@@ -391,6 +431,8 @@ def process_company(company_id: str, hubspot_call_id: str):
 
         # Stage 5: BANTIC Analysis
         logger.info("\n→ Running BANTIC analysis...")
+        if run_id:
+            _heartbeat_run(run_id, "stage_5_bantic_analysis_started")
         calls_with_scores = analyze_calls(cleaned_calls_list)
         if run_id:
             for call, _score in calls_with_scores:
@@ -398,6 +440,8 @@ def process_company(company_id: str, hubspot_call_id: str):
         _sync_journey_calls(journey, [call for call, _score in calls_with_scores])
         if calls_with_scores:
             # Stage 5.5: Final Judge
+            if run_id:
+                _heartbeat_run(run_id, "stage_5_5_final_judge_started")
             calls_with_scores = judge_bantic_scores(calls_with_scores, company_name=journey.company.name)
             if run_id:
                 for call, _score in calls_with_scores:
@@ -405,9 +449,13 @@ def process_company(company_id: str, hubspot_call_id: str):
             _sync_journey_calls(journey, [call for call, _score in calls_with_scores])
 
             # Stage 6: Score Module
+            if run_id:
+                _heartbeat_run(run_id, "stage_6_score_started")
             score_result = score_company_journey(calls_with_scores, trigger_call_id=hubspot_call_id)
             
             # Stage 7: AE Brief
+            if run_id:
+                _heartbeat_run(run_id, "stage_7_brief_started")
             brief = generate_ae_brief(journey, score_result)
             if brief:
                 logger.info("\n→ Saving brief...")
@@ -425,19 +473,32 @@ def process_company(company_id: str, hubspot_call_id: str):
                         "brief_markdown": brief_markdown,
                         "handoff_path": handoff_path if Path(handoff_path).exists() else None,
                         "dashboard_path": dashboard_path if Path(dashboard_path).exists() else None,
-                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "completed_at": _utc_now_iso(),
+                        "updated_at": _utc_now_iso(),
                     })
                 logger.info(f"✓ Complete: {journey.company.name}")
                 return True
 
         if run_id:
-            update_ae_handoff_run(run_id, {"status": "failed", "error_message": "Brief generation did not complete"})
+            now = _utc_now_iso()
+            update_ae_handoff_run(run_id, {
+                "status": "failed",
+                "error_message": "Brief generation did not complete",
+                "completed_at": now,
+                "updated_at": now,
+            })
         return False
 
     except Exception as e:
         logger.error(f"✗ Pipeline error: {e}", exc_info=True)
         if run_id:
-            update_ae_handoff_run(run_id, {"status": "failed", "error_message": str(e)})
+            now = _utc_now_iso()
+            update_ae_handoff_run(run_id, {
+                "status": "failed",
+                "error_message": str(e),
+                "completed_at": now,
+                "updated_at": now,
+            })
         return False
 
 

@@ -32,7 +32,8 @@ def _get_judge_client():
             )
         _judge_client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
-            api_key=api_key
+            api_key=api_key,
+            max_retries=0,
         )
     return _judge_client
 

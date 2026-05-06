@@ -117,10 +117,16 @@ def upsert_contact(contact_data: dict) -> bool:
     """Upsert contact data into Supabase contacts table."""
     try:
         supabase = get_supabase()
-        # Remove is_dm if the column doesn't exist yet in the schema
-        data_to_upsert = {k: v for k, v in contact_data.items() if k != "is_dm"}
+        data_to_upsert = {
+            "hubspot_contact_id": contact_data.get("hubspot_contact_id"),
+            "hubspot_company_id": contact_data.get("hubspot_company_id"),
+            "contact_name": contact_data.get("contact_name") or contact_data.get("name"),
+            "job_title": contact_data.get("job_title") or contact_data.get("title"),
+            "email": contact_data.get("email"),
+            "phone": contact_data.get("phone"),
+        }
+        data_to_upsert = {key: value for key, value in data_to_upsert.items() if value is not None}
         supabase.table("contacts").upsert(data_to_upsert, on_conflict="hubspot_contact_id").execute()
-        # Note: is_dm column should be added to Supabase schema separately
         return True
     except Exception as e:
         logger.error(f"Error upserting contact {contact_data.get('hubspot_contact_id')}: {e}")
@@ -131,7 +137,7 @@ def get_contacts_for_company(company_id: str) -> list:
     try:
         supabase = get_supabase()
         response = supabase.table("contacts").select(
-            "hubspot_contact_id, name, title, email"
+            "hubspot_contact_id, contact_name, job_title, email"
         ).eq("hubspot_company_id", company_id).execute()
         return response.data
     except Exception as e:
