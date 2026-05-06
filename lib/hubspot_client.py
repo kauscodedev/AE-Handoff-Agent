@@ -10,6 +10,7 @@ from .types import Company, Contact
 logger = logging.getLogger(__name__)
 
 HUBSPOT_API_URL = "https://api.hubapi.com"
+HUBSPOT_REQUEST_TIMEOUT = 30
 
 def get_headers():
     token = os.getenv("HUBSPOT_TOKEN")
@@ -31,7 +32,7 @@ def get_disposition_mapping() -> Dict[str, str]:
     
     try:
         url = f"{HUBSPOT_API_URL}/calling/v1/dispositions"
-        response = requests.get(url, headers=get_headers())
+        response = requests.get(url, headers=get_headers(), timeout=HUBSPOT_REQUEST_TIMEOUT)
         response.raise_for_status()
         options = response.json()
         _DISPOSITION_MAPPING = {opt["id"]: opt["label"] for opt in options}
@@ -52,7 +53,7 @@ def get_call_company_id(call_id: str) -> Optional[str]:
     """Fetch the first company associated with a HubSpot call."""
     try:
         url = f"{HUBSPOT_API_URL}/crm/v3/objects/calls/{call_id}/associations/companies"
-        response = requests.get(url, headers=get_headers())
+        response = requests.get(url, headers=get_headers(), timeout=HUBSPOT_REQUEST_TIMEOUT)
         response.raise_for_status()
         results = response.json().get("results", [])
         if not results:
@@ -81,6 +82,16 @@ def _clean_call_notes(value: Optional[str]) -> Optional[str]:
     if text.strip().lower() in {"[nooks]", "nooks"}:
         return None
     return text
+
+def _parse_optional_int(value: Optional[Any]) -> Optional[int]:
+    """Parse HubSpot numeric properties that may arrive as '200.0' strings."""
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        logger.warning(f"Could not parse integer value from HubSpot property: {value!r}")
+        return None
 
 def _format_call_details(call_id: str, props: Dict[str, Any], company_id: Optional[str] = None) -> Dict[str, Any]:
     """Normalize HubSpot call properties into the pipeline's call shape."""
@@ -173,7 +184,7 @@ def search_meeting_scheduled_calls(limit: int = 10, since_timestamp_ms: Optional
             else:
                 payload.pop("after", None)
 
-            response = requests.post(url, headers=get_headers(), json=payload)
+            response = requests.post(url, headers=get_headers(), json=payload, timeout=HUBSPOT_REQUEST_TIMEOUT)
             response.raise_for_status()
             body = response.json()
 
@@ -210,14 +221,14 @@ def get_company(company_id: str) -> Optional[Company]:
         params = {
             "properties": ["name", "numberofemployees", "country"]
         }
-        response = requests.get(url, headers=get_headers(), params=params)
+        response = requests.get(url, headers=get_headers(), params=params, timeout=HUBSPOT_REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         props = data.get("properties", {})
         return Company(
             hubspot_id=company_id,
             name=props.get("name") or "Unknown",
-            employees=int(props.get("numberofemployees")) if props.get("numberofemployees") else None,
+            employees=_parse_optional_int(props.get("numberofemployees")),
             location=props.get("country")
         )
     except Exception as e:
@@ -228,7 +239,7 @@ def get_company_contacts(company_id: str) -> List[Contact]:
     """Fetch all contacts associated with a company."""
     try:
         url = f"{HUBSPOT_API_URL}/crm/v3/objects/companies/{company_id}/associations/contacts"
-        response = requests.get(url, headers=get_headers())
+        response = requests.get(url, headers=get_headers(), timeout=HUBSPOT_REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         contact_ids = [assoc["id"] for assoc in data.get("results", [])]
@@ -250,7 +261,7 @@ def get_contact(contact_id: str) -> Optional[Contact]:
         params = {
             "properties": ["firstname", "lastname", "jobtitle", "email"]
         }
-        response = requests.get(url, headers=get_headers(), params=params)
+        response = requests.get(url, headers=get_headers(), params=params, timeout=HUBSPOT_REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         props = data.get("properties", {})
@@ -271,7 +282,7 @@ def get_company_calls(company_id: str) -> List[str]:
     """Fetch all call IDs associated with a company."""
     try:
         url = f"{HUBSPOT_API_URL}/crm/v3/objects/companies/{company_id}/associations/calls"
-        response = requests.get(url, headers=get_headers())
+        response = requests.get(url, headers=get_headers(), timeout=HUBSPOT_REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         call_ids = [assoc["id"] for assoc in data.get("results", [])]
@@ -295,7 +306,7 @@ def get_call_details(call_id: str, company_id: Optional[str] = None) -> Optional
                 "hs_body_preview",
             ]
         }
-        response = requests.get(url, headers=get_headers(), params=params)
+        response = requests.get(url, headers=get_headers(), params=params, timeout=HUBSPOT_REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         return _format_call_details(call_id, data.get("properties", {}), company_id)
@@ -309,7 +320,7 @@ def get_owner_name(owner_id: str) -> Optional[str]:
         return None
     try:
         url = f"{HUBSPOT_API_URL}/crm/v3/owners/{owner_id}"
-        response = requests.get(url, headers=get_headers())
+        response = requests.get(url, headers=get_headers(), timeout=HUBSPOT_REQUEST_TIMEOUT)
         if response.status_code == 404:
             return None
         response.raise_for_status()
@@ -330,7 +341,7 @@ def update_company_property(company_id: str, property_name: str, value: str) -> 
                 property_name: value
             }
         }
-        response = requests.patch(url, headers=get_headers(), json=payload)
+        response = requests.patch(url, headers=get_headers(), json=payload, timeout=HUBSPOT_REQUEST_TIMEOUT)
         response.raise_for_status()
         logger.debug(f"✓ Updated company {company_id} property '{property_name}'")
         return True
