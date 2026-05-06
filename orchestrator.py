@@ -459,7 +459,7 @@ def process_company(company_id: str, hubspot_call_id: str):
             brief = generate_ae_brief(journey, score_result)
             if brief:
                 logger.info("\n→ Saving brief...")
-                save_brief(journey.company.name, brief, hubspot_call_id, journey.company.hubspot_id)
+                save_brief(journey.company.name, brief, hubspot_call_id, journey.company.hubspot_id, score_result)
                 if run_id:
                     handoff_path = _safe_output_path("handoffs", journey.company.name, "_handoff.md")
                     dashboard_path = _safe_output_path("dashboards", journey.company.name, "_dashboard.html")
@@ -470,6 +470,9 @@ def process_company(company_id: str, hubspot_call_id: str):
                         "qualification_tier": score_result.get("qualification_tier"),
                         "best_scores": _json_safe(score_result.get("best_scores")),
                         "per_call_matrix": _json_safe(score_result.get("per_call_matrix")),
+                        "metadata": {
+                            "bantic_snapshot": _json_safe(score_result.get("bantic_snapshot")),
+                        },
                         "brief_markdown": brief_markdown,
                         "handoff_path": handoff_path if Path(handoff_path).exists() else None,
                         "dashboard_path": dashboard_path if Path(dashboard_path).exists() else None,

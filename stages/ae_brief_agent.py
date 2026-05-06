@@ -24,6 +24,9 @@ Rules:
 - Prefer concrete language over vague sales phrasing.
 - Use short quoted evidence snippets only when they sharpen the point.
 - Write like an internal handoff note another seller would trust.
+- Use the full BANTIC payload below as the source of truth for qualification details.
+- Reflect the strongest buying signal and the biggest qualification gap in next_steps.
+- Do not repeat the BANTIC table verbatim; it will be inserted separately.
 
 OUTPUT REQUIRED:
 Return ONLY a valid JSON object with exactly these 5 keys:
@@ -47,6 +50,9 @@ COMPANY CONTEXT:
 
 BANTIC BEST-SCORE TABLE:
 {dimensions_table}
+
+FULL BANTIC PAYLOAD:
+{bantic_snapshot}
 """
 
 
@@ -69,6 +75,7 @@ def generate_ae_brief(journey: CompanyJourney, score_result: Dict[str, Any]) -> 
     weighted_score = score_result["weighted_score"]
     tier = score_result["qualification_tier"]
     dim_table = score_result["dimensions_table"]
+    bantic_snapshot = score_result.get("bantic_snapshot_prompt") or "{}"
 
     # Format prompt
     prompt = AE_HANDOFF_PROMPT.format(
@@ -81,7 +88,8 @@ def generate_ae_brief(journey: CompanyJourney, score_result: Dict[str, Any]) -> 
         dm_contact=journey.dm_contact.name if journey.dm_contact else "UNKNOWN",
         meeting_time=journey.scheduled_meeting_time if journey.scheduled_meeting_time else "UNKNOWN",
         sdr_name=journey.sdr_name or "Unknown SDR",
-        dimensions_table=dim_table
+        dimensions_table=dim_table,
+        bantic_snapshot=bantic_snapshot,
     )
 
     try:
@@ -111,11 +119,54 @@ def generate_ae_brief(journey: CompanyJourney, score_result: Dict[str, Any]) -> 
         return None
 
 
-def save_brief(company_name: str, brief_sections: Dict[str, str], hubspot_call_id: str, company_id: str) -> bool:
+def _format_qualification_summary(score_result: Optional[Dict[str, Any]]) -> str:
+    if not score_result:
+        return ""
+
+    weighted_score = score_result.get("weighted_score", "UNKNOWN")
+    tier = score_result.get("qualification_tier", "UNKNOWN")
+    calls_analyzed = score_result.get("num_calls_analyzed", "UNKNOWN")
+    snapshot_table = score_result.get("bantic_snapshot_markdown") or score_result.get("dimensions_table") or ""
+    dimensions = (score_result.get("bantic_snapshot") or {}).get("dimensions", [])
+    strongest = max(dimensions, key=lambda item: item.get("score") or 0, default={})
+    gaps = [item for item in dimensions if (item.get("score") or 0) < 3]
+    biggest_gap = min(gaps, key=lambda item: item.get("score") or 0, default={})
+    strongest_line = "UNKNOWN"
+    if strongest:
+        strongest_line = (
+            f"{strongest.get('dimension', 'UNKNOWN')} "
+            f"({strongest.get('score', 0)}/3): {strongest.get('info_captured') or strongest.get('evidence') or 'UNKNOWN'}"
+        )
+    gap_line = "Complete"
+    if biggest_gap:
+        gap_line = (
+            f"{biggest_gap.get('dimension', 'UNKNOWN')} "
+            f"({biggest_gap.get('score', 0)}/3): {biggest_gap.get('gap_or_follow_up') or 'UNKNOWN'}"
+        )
+
+    return (
+        "## Qualification Summary\n"
+        f"- Overall Score: {weighted_score}/10 ({tier})\n"
+        f"- Calls Analyzed: {calls_analyzed}\n\n"
+        f"- Strongest Buying Signal: {strongest_line}\n"
+        f"- Biggest AE Follow-up Gap: {gap_line}\n\n"
+        "## BANTIC Qualification Snapshot\n"
+        f"{snapshot_table}\n"
+    )
+
+
+def save_brief(
+    company_name: str,
+    brief_sections: Dict[str, str],
+    hubspot_call_id: str,
+    company_id: str,
+    score_result: Optional[Dict[str, Any]] = None,
+) -> bool:
     """Save brief sections to local .md file, update HubSpot company property, and mark as sent in Supabase."""
     try:
         # Build markdown content from sections
         markdown_content = f"# {company_name} Handoff Brief\n\n"
+        markdown_content += _format_qualification_summary(score_result)
         markdown_content += f"## ICP Fit\n{brief_sections.get('icp_fit', 'N/A')}\n\n"
         markdown_content += f"## Current Process\n{brief_sections.get('current_process', 'N/A')}\n\n"
         markdown_content += f"## Evaluating Tools\n{brief_sections.get('evaluating_tools', 'N/A')}\n\n"
