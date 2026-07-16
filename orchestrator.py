@@ -6,7 +6,7 @@ CoordinatorAgent owns the durable loop:
 1. TriggerDiscoveryAgent reconciles HubSpot Meeting Scheduled calls.
 2. RunLedgerAgent claims work in ae_handoff_runs and enforces idempotency.
 3. HandoffPipelineAgent delegates to specialist stage agents:
-   fetch, transcription, transcript cleaning, judges, DM discovery, BANTIC,
+   fetch, transcription, transcript cleaning, DM discovery, BANTIC,
    deterministic scoring, and AE brief generation.
 
 HubSpot is the CRM source of truth. ae_handoff_runs is the processing ledger.
@@ -33,10 +33,8 @@ from agents.pipeline_agent import HandoffPipelineAgent
 from stages.fetch_agent import fetch_company_journey
 from stages.transcription import transcribe_calls
 from stages.clean_transcript import clean_calls
-from stages.transcript_judge import judge_transcripts
 from stages.dm_discovery import discover_dm
 from stages.bantic_analysis import analyze_calls
-from stages.final_judge import judge_bantic_scores
 from stages.score_module import score_company_journey
 from stages.ae_brief_agent import generate_ae_brief, save_brief
 
@@ -131,10 +129,6 @@ def _build_run_call_payload(run_id: str, call, call_data: Dict[str, Any]) -> Dic
         "deepgram_entities": call.deepgram_entities,
         "deepgram_sentiment": call.deepgram_sentiment,
         "deepgram_topics": call.deepgram_topics,
-        "transcript_judge_verdict": getattr(call, "transcript_judge_verdict", None),
-        "transcript_judge_feedback": getattr(call, "transcript_judge_feedback", None),
-        "final_judge_verdict": getattr(call, "final_judge_verdict", None),
-        "final_judge_feedback": getattr(call, "final_judge_feedback", None),
         "bantic_scores": bantic_scores,
     }
 
@@ -182,10 +176,6 @@ def _update_run_call(run_id: str, call) -> None:
             "deepgram_entities": call.deepgram_entities,
             "deepgram_sentiment": call.deepgram_sentiment,
             "deepgram_topics": call.deepgram_topics,
-            "transcript_judge_verdict": getattr(call, "transcript_judge_verdict", None),
-            "transcript_judge_feedback": getattr(call, "transcript_judge_feedback", None),
-            "final_judge_verdict": getattr(call, "final_judge_verdict", None),
-            "final_judge_feedback": getattr(call, "final_judge_feedback", None),
             "bantic_scores": bantic_scores,
         }
     )
@@ -208,8 +198,6 @@ def _sync_journey_calls(journey, calls) -> None:
         call_data["deepgram_entities"] = call.deepgram_entities
         call_data["deepgram_sentiment"] = call.deepgram_sentiment
         call_data["deepgram_topics"] = call.deepgram_topics
-        call_data["transcript_judge_verdict"] = call.transcript_judge_verdict
-        call_data["final_judge_verdict"] = call.final_judge_verdict
 
 # Load Environment Variables
 load_dotenv()
@@ -405,16 +393,6 @@ def process_company(company_id: str, hubspot_call_id: str):
                 _update_run_call(run_id, call)
         _sync_journey_calls(journey, transcribed_calls)
 
-        # Stage 4.1: Transcript Judge
-        logger.info("\n→ Reviewing speaker labels...")
-        if run_id:
-            _heartbeat_run(run_id, "stage_4_1_transcript_judge_started")
-        cleaned_calls_list = judge_transcripts(cleaned_calls_list)
-        if run_id:
-            for call in cleaned_calls_list:
-                _update_run_call(run_id, call)
-        _sync_journey_calls(journey, cleaned_calls_list)
-
         # Stage 4.5: DM Discovery from transcripts
         logger.info("\n→ Discovering decision maker...")
         if run_id:
@@ -439,15 +417,6 @@ def process_company(company_id: str, hubspot_call_id: str):
                 _update_run_call(run_id, call)
         _sync_journey_calls(journey, [call for call, _score in calls_with_scores])
         if calls_with_scores:
-            # Stage 5.5: Final Judge
-            if run_id:
-                _heartbeat_run(run_id, "stage_5_5_final_judge_started")
-            calls_with_scores = judge_bantic_scores(calls_with_scores, company_name=journey.company.name)
-            if run_id:
-                for call, _score in calls_with_scores:
-                    _update_run_call(run_id, call)
-            _sync_journey_calls(journey, [call for call, _score in calls_with_scores])
-
             # Stage 6: Score Module
             if run_id:
                 _heartbeat_run(run_id, "stage_6_score_started")

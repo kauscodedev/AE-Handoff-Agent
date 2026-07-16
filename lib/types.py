@@ -34,10 +34,6 @@ class Call:
         self.deepgram_topics: Optional[Dict[str, Any]] = None
         self.transcription_status = "pending"
         self.analysis_status = "pending"
-        self.transcript_judge_verdict: Optional[str] = None
-        self.transcript_judge_feedback: Optional[Dict[str, Any]] = None
-        self.final_judge_verdict: Optional[str] = None
-        self.final_judge_feedback: Optional[Dict[str, Any]] = None
 
 class BANTICScore:
     def __init__(self, 

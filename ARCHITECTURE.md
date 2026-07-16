@@ -2,9 +2,9 @@
 
 ## Overview
 
-The AE Handoff Brief Agent is a standalone 9-stage multi-agent pipeline that transforms raw HubSpot call data into evidence-based Account Executive handoff briefs and HTML dashboards. It operates independently from call-scoring-agent but uses the same Supabase database for call persistence, transcripts, BANTIC data, and idempotency flags.
+The AE Handoff Brief Agent is a standalone 8-stage multi-agent pipeline that transforms raw HubSpot call data into evidence-based Account Executive handoff briefs and HTML dashboards. It operates independently from call-scoring-agent but uses the same Supabase database for call persistence, transcripts, BANTIC data, and idempotency flags.
 
-## 9-Stage Pipeline
+## 8-Stage Pipeline
 
 ### Stage 1: HubSpot Watcher
 **File**: `stages/watcher.py`
@@ -125,33 +125,6 @@ Only calls up to the trigger call date are included, so later activity does not 
 
 ---
 
-### Stage 4.1: Transcript Judge
-**File**: `stages/transcript_judge.py`
-
-**Purpose**: Uses GLM-4.7 through NVIDIA's API to verify that Stage 4 speaker labels are correct.
-
-**Input**:
-- Raw Deepgram transcript
-- Cleaned role-labeled transcript
-
-**Checks**:
-- Global SDR/prospect swaps
-- Individual mislabeled turns
-- Voicemail, IVR, and receptionist turns mislabeled as SDR/prospect
-
-**Output**:
-- Approved or corrected cleaned transcript
-- Judge feedback appended to `logs/transcript_judge_feedback.jsonl`
-- Corrected transcript persisted to Supabase when changes are made
-
-**Model**: `z-ai/glm4.7` via `https://integrate.api.nvidia.com/v1`
-
-**Timeout**: 30 seconds per request in the current code path
-
-**Safety Principle**: Corrections are applied programmatically to labels only. Stage 4.1 never rewrites dialogue content.
-
----
-
 ### Stage 4.5: DM Discovery Agent
 **File**: `stages/dm_discovery.py`
 
@@ -212,28 +185,6 @@ Only calls up to the trigger call date are included, so later activity does not 
 
 ---
 
-### Stage 5.5: Final Judge
-**File**: `stages/final_judge.py`
-
-**Purpose**: Uses GLM-4.7 through NVIDIA's API to review BANTIC scores and revise only clearly wrong values.
-
-**Input**:
-- Cleaned transcript
-- Original BANTIC scores, evidence, and captured info
-
-**Output**:
-- Approved or revised `BANTICScore`
-- Judge feedback appended to `logs/judge_feedback.jsonl`
-- Revised fields persisted to Supabase when changes are made
-
-**Model**: `z-ai/glm4.7` via `https://integrate.api.nvidia.com/v1`
-
-**Timeout**: 30 seconds per request in the current code path
-
-**Principle**: Non-overcritical review. The judge should not nitpick borderline calls.
-
----
-
 ### Stage 6: Score Module (Python, No LLM)
 **File**: `stages/score_module.py`
 
@@ -281,7 +232,6 @@ Only calls up to the trigger call date are included, so later activity does not 
 - company/contact snapshot
 - transcription status
 - analysis status
-- transcript judge / final judge verdicts
 - final weighted score and qualification tier
 - saved brief and dashboard paths
 
@@ -344,7 +294,7 @@ Supabase calls table
   ├─ BANTIC scores (from analysis)
   └─ Evidence quotes
         ↓
-Orchestrator (9 stages)
+Orchestrator (8 stages)
         ↓
 Handoff brief + dashboard (local files + database flag)
 ```
@@ -381,10 +331,8 @@ Handoff brief + dashboard (local files + database flag)
 | 3 | Empty recording URL | Skip call, continue to next |
 | 3 | Deepgram API error | Mark as failed, log error, retry next cycle |
 | 4 | OpenAI error | Log error, skip call |
-| 4.1 | NVIDIA judge error/timeout | Log warning, keep cleaned transcript, continue |
 | 5 | OpenAI error | Log error, skip call |
 | 5 | JSON parse error | Try to extract from markdown wrapper, else skip |
-| 5.5 | NVIDIA judge error/timeout | Log warning, keep original BANTIC score, continue |
 | 6 | No analyzed calls | Log warning, skip company |
 | 7 | OpenAI error | Log error, skip brief generation |
 | 7 | File write error | Log error, skip save step |
@@ -401,10 +349,8 @@ Assuming 5 calls per company:
 | 1-2 | 1 | $0.0005 | $0.0005 |
 | 3 | 5 | $0.0043/min (avg 12 min) | $0.26 |
 | 4 | 5 | $0.00015 | $0.00075 |
-| 4.1 | 5 | NVIDIA API usage | varies |
 | 4.5 | 1 | $0.00015 | ~$0.00015 |
 | 5 | 5 | $0.0005 | $0.0025 |
-| 5.5 | 5 | NVIDIA API usage | varies |
 | 6 | - | $0 | $0 |
 | 7 | 1 | $0.001 | $0.001 |
 | **Total** | - | - | **~$0.26** |
@@ -434,9 +380,7 @@ Assuming 5 calls per company:
 ✓ Stage 1: Watcher found X pending calls
 ✓ Stage 2: Fetch complete: X contacts, Y calls
 ✓ Stage 3: Transcribed 5/5 calls
-✓ Stage 4.1 complete: X approved, Y revised
 ✓ Stage 5: BANTIC analysis for 5 calls
-✓ Stage 5.5 complete: X approved, Y revised
 ✓ Stage 6 complete: Overall Score X.X (Qualification Tier)
 ✓ Brief saved: handoffs/Company_handoff.md
 ```

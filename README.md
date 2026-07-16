@@ -1,6 +1,6 @@
 # AE Handoff Brief Agent
 
-Agentic handoff system that reconciles HubSpot for new "C - Meeting Scheduled" calls, claims durable work in Supabase, delegates specialist sub-agents for context gathering/transcription/analysis/judging/briefing, and generates Markdown handoff briefs plus HTML dashboards for Account Executives.
+Agentic handoff system that reconciles HubSpot for new "C - Meeting Scheduled" calls, claims durable work in Supabase, delegates specialist sub-agents for context gathering/transcription/analysis/briefing, and generates Markdown handoff briefs plus HTML dashboards for Account Executives.
 
 ## Architecture
 
@@ -14,10 +14,8 @@ CoordinatorAgent
         ├─ ContextFetchAgent: company/contact/call enrichment from HubSpot
         ├─ TranscriptionAgent: Deepgram Nova-3
         ├─ TranscriptAgent: OpenAI speaker cleanup
-        ├─ TranscriptJudgeAgent: GLM-4.7 label review, non-critical
         ├─ DMDiscoveryAgent: decision-maker identification
         ├─ BANTICAnalysisAgent: OpenAI scoring
-        ├─ FinalJudgeAgent: GLM-4.7 score review, non-critical
         ├─ ScoreAgent: deterministic weighted score
         └─ BriefAgent: Markdown, dashboard, HubSpot company update
 
@@ -42,7 +40,6 @@ cp .env.example .env
 # SUPABASE_SERVICE_KEY=<your-key>
 # DEEPGRAM_API_KEY=<your-key>
 # OPENAI_API_KEY=<your-key>
-# NVIDIA_API_KEY=<your-key>
 
 # Create logs directory
 mkdir -p logs
@@ -114,7 +111,7 @@ Ask about budget allocation for photo improvement. Clarify who approves the solu
    - `C - Gave a Referral`
    - `Connected`
 5. If the trigger call has no associated company, the pipeline falls back to an `INDIVIDUAL` trigger-call-only run instead of skipping it.
-6. Deepgram transcribes recordings, OpenAI cleans speaker labels, OpenAI scores BANTIC with Call Notes as high-priority context when available, NVIDIA judges labels and BANTIC, Python computes the weighted score, and OpenAI writes the final handoff brief.
+6. Deepgram transcribes recordings, OpenAI cleans speaker labels, OpenAI scores BANTIC with Call Notes as high-priority context when available, Python computes the weighted score, and OpenAI writes the final handoff brief.
 7. Supabase stores the trigger lifecycle in `ae_handoff_runs` and per-call processing state in `ae_handoff_run_calls`.
 8. For company-backed runs, the final brief is written back to the HubSpot company property. For `INDIVIDUAL` runs, that HubSpot company update is skipped.
 
@@ -128,14 +125,14 @@ Ask about budget allocation for photo improvement. Clarify who approves the solu
 - **Rolling Reconciliation**: HubSpot trigger discovery scans a lookback window and paginates results, so late-arriving records do not disappear behind a cursor
 - **No-Company Fallback**: Trigger calls without a company can still generate an `INDIVIDUAL` handoff
 - **Run Tracking**: Stores run-level and call-level pipeline state in `ae_handoff_runs` and `ae_handoff_run_calls`
-- **Call Notes Aware**: Stores fetched Call Notes inside `ae_handoff_run_calls.bantic_scores.call_notes` and uses them during BANTIC analysis/judging
+- **Call Notes Aware**: Stores fetched Call Notes inside `ae_handoff_run_calls.bantic_scores.call_notes` and uses them during BANTIC analysis
 - **Standalone**: Separate from call-scoring-agent; uses same API keys
 
 ## File Structure
 
 ```
 ae-handoff-brief-agent/
-├── orchestrator.py              ← main loop: 9-stage pipeline
+├── orchestrator.py              ← main loop: 8-stage pipeline
 ├── agents/
 │   ├── coordinator.py           ← top-level agent loop
 │   ├── discovery_agent.py       ← HubSpot trigger reconciliation
@@ -147,10 +144,8 @@ ae-handoff-brief-agent/
 │   ├── fetch_agent.py          ← Stage 2: HubSpot company/contact/call fetch
 │   ├── transcription.py        ← Stage 3: Deepgram submission
 │   ├── clean_transcript.py     ← Stage 4: speaker labeling
-│   ├── transcript_judge.py     ← Stage 4.1: speaker-label judge
 │   ├── dm_discovery.py         ← Stage 4.5: decision-maker discovery
 │   ├── bantic_analysis.py      ← Stage 5: BANTIC scoring
-│   ├── final_judge.py          ← Stage 5.5: BANTIC score judge
 │   ├── score_module.py         ← Stage 6: weighted score calc
 │   └── ae_brief_agent.py       ← Stage 7: brief generation
 ├── lib/
@@ -191,9 +186,7 @@ Look for:
 - `Discovery reconciled X HubSpot Meeting Scheduled calls over 48h; Y need work`
 - `Ledger claimed trigger <id> as run <id>`
 - `✓ Stage 2 complete: <company> with X connected calls tracked`
-- `✓ Stage 4.1 complete: X approved, Y revised`
 - `✓ Stage 5: BANTIC analysis for 5 calls`
-- `✓ Stage 5.5 complete: X approved, Y revised`
 - `✓ Stage 6 complete: Overall Score X.X (Qualification Tier)`
 - `✓ Brief saved: handoffs/Company_handoff.md`
 
@@ -206,7 +199,6 @@ Look for:
 - **Stage 1 source of truth**: HubSpot is searched directly; `ae_handoff_runs` is used for idempotency and run lifecycle
 - **Stage 2 call filter**: only `Meeting Scheduled`, `Callback High Intent`, `Callback Low Intent`, `Gave a Referral`, and `Connected` calls are included for transcription/analysis
 - **Watcher state**: the active agentic runtime does not depend on `.watcher_state.json`; it reconciles a rolling HubSpot lookback against `ae_handoff_runs`
-- **NVIDIA judge calls**: Stage 4.1 and Stage 5.5 use 90-second request timeouts and continue on judge errors where possible
 
 ## Troubleshooting
 

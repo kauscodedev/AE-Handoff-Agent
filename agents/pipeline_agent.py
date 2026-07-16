@@ -11,8 +11,8 @@ class HandoffPipelineAgent:
     Executes the specialist sub-agent chain for one claimed trigger.
 
     The current specialists are the existing stage modules: context fetch,
-    transcription, transcript cleaning, transcript judge, DM discovery, BANTIC
-    analysis, final judge, deterministic scoring, and brief generation.
+    transcription, transcript cleaning, DM discovery, BANTIC analysis,
+    deterministic scoring, and brief generation.
     """
 
     def __init__(self, process_trigger: Callable[[str, str], bool]):

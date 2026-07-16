@@ -12,10 +12,10 @@ A Python 3 agentic handoff system that automatically generates Account Executive
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in all 6 keys
+cp .env.example .env   # fill in all 5 keys
 ```
 
-Required env vars (see `.env.example`): `HUBSPOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `NVIDIA_API_KEY`.
+Required env vars (see `.env.example`): `HUBSPOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`.
 
 Optional env vars: `HUBSPOT_ASSOCIATION_RETRIES` (default: 3, controls HubSpot retry count), `AE_HANDOFF_STALE_RUN_MINUTES` (default: 45, controls when an active run is reclaimed as stale).
 
@@ -30,10 +30,6 @@ python3 orchestrator.py --interval 120
 
 # One-shot run (useful for testing)
 python3 orchestrator.py --once
-
-# Run judge smoke tests (no pytest needed — standalone scripts)
-python3 test_judge.py
-python3 test_transcript_judge.py
 
 # Dev monitoring dashboard (Flask, port 8000; requires 'flask' package)
 pip install flask
@@ -73,10 +69,8 @@ Specialist stages execute sequentially per trigger; Stage 5 (BANTIC scoring) run
 | 2 | `stages/fetch_agent.py` | Fetches company/contact/call data from HubSpot, including Call Notes (`hs_call_body` / `hs_body_preview`) when present; narrows analysis calls to `C - Meeting Scheduled`, `C - Callback High Intent`, `C - Callback Low Intent`, `C - Gave a Referral`, and `Connected`; merges in stored transcript/analysis state from Supabase |
 | 3 | `stages/transcription.py` | Submits recording URL to Deepgram Nova-3 (synchronous STT + diarization via REST API) |
 | 4 | `stages/clean_transcript.py` | gpt-4o-mini relabels Speaker 0/1 → `[SDR]`/`[PROSPECT]`/`[VOICEMAIL/IVR]`/`[RECEPTIONIST]` |
-| 4.1 | `stages/transcript_judge.py` | GLM-4.7 with thinking verifies speaker labels are correct; catches global swaps ([SDR]↔[PROSPECT]) and individual turn mismatches; logs verdict + corrections to `logs/transcript_judge_feedback.jsonl` |
 | 4.5 | `stages/dm_discovery.py` | gpt-4o-mini analyzes cleaned transcripts to identify the actual decision-maker; fuzzy substring-matches back to contacts list; falls back to `contacts[0]` |
 | 5 | `stages/bantic_analysis.py` | gpt-4o-mini scores 6 BANTIC dimensions per call in parallel (0–3 each) via `ThreadPoolExecutor(max_workers=10)`; HubSpot/Nooks Call Notes are high-priority context when present |
-| 5.5 | `stages/final_judge.py` | GLM-4.7 with thinking reviews BANTIC scores for accuracy using transcript + Call Notes; revises only clearly wrong scores; logs verdict + changes to `logs/judge_feedback.jsonl` |
 | 6 | `stages/score_module.py` | Pure Python weighted score — no LLM (avoids hallucination in math) |
 | 7 | `stages/ae_brief_agent.py` | gpt-4o writes Markdown brief; `lib/html_generator.py` builds HTML dashboard |
 
@@ -91,30 +85,27 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **Transcript reuse**: if `raw_transcript` already exists in the Supabase row, Stage 3 is skipped.
 - **Best score wins**: Stage 6 takes the highest per-dimension score across all calls for a company, not the average.
 - **Score formula** (Stage 6, `score_module.py`): `(B×5 + A×20 + N×25 + T×15 + I×15 + CP×20) / 30`. Tier mapping: ≥8.1 = "Very High Intent", 8.0 = "High Intent", 5.0–7.9 = "Qualified", <5.0 = "Disqualified".
-- **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stages 4.1 and 5.5 use GLM-4.7 via NVIDIA API (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
+- **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
 - **PID lockfile**: orchestrator writes `/tmp/ae_handoff_orchestrator.lock` on startup to prevent duplicate instances.
 - **Trigger discovery**: `TriggerDiscoveryAgent` scans a rolling HubSpot lookback window and paginates search results, then reconciles candidates against `ae_handoff_runs`.
 - **Run status lifecycle**: `ae_handoff_runs.status` flows as `discovered → processing → completed` or `failed`. Failed runs are automatically retried on the next coordinator tick.
 - **Local watcher state is legacy**: `.watcher_state.json` and `stages/watcher.py` are compatibility leftovers. The active agentic runtime should not depend on them for correctness.
 - **Allowed analysis call set**: Stage 2 only includes `Meeting Scheduled`, `Callback High Intent`, `Callback Low Intent`, `Gave a Referral`, and `Connected` calls, and only up to the trigger call date.
-- **Call Notes**: Stage 2 fetches HubSpot Call Notes for trigger and history calls. Stage 5 treats notes as high-priority BANTIC context; Stage 5.5 sees the same notes so the judge does not undo notes-based scoring. Notes are persisted in `ae_handoff_run_calls.bantic_scores.call_notes` because there is no dedicated call-notes column.
+- **Call Notes**: Stage 2 fetches HubSpot Call Notes for trigger and history calls. Stage 5 treats notes as high-priority BANTIC context. Notes are persisted in `ae_handoff_run_calls.bantic_scores.call_notes` because there is no dedicated call-notes column.
 - **No-company trigger fallback**: if a trigger has no company association, the pipeline creates an `INDIVIDUAL` trigger-call-only journey instead of skipping it.
 - **DM confidence gating**: Stage 4.5 only updates `dm_contact` if confidence is `"high"` or `"medium"`; low-confidence results fall back to `contacts[0]`.
 - **HubSpot is the CRM source of truth**: company details, contacts, and associated calls come from HubSpot.
 - **Supabase run tables are the processing source of truth**: `ae_handoff_runs` and `ae_handoff_run_calls` own lifecycle/audit state. The legacy `calls` table is a cache/compatibility store for transcripts, analysis artifacts, and `ae_brief_sent`.
 - **Companies table is not business source of truth**: it is only upserted because the legacy `calls` table has a foreign key on `hubspot_company_id`; it should not block trigger discovery or idempotency.
 - **BANTIC analysis status**: Stage 5 writes `analysis_status = "completed"`; Supabase rejects `"complete"` via `calls_analysis_status_check`.
-- **NVIDIA judge timeouts**: Stages 4.1 and 5.5 set 30-second request timeouts for NVIDIA GLM-4.7 calls; judge failures log as warnings and the pipeline continues (judges are non-critical — they only revise clearly wrong scores).
 - **Run tracking**: the orchestrator writes `ae_handoff_runs` and `ae_handoff_run_calls` throughout the run so brief generation can be audited at trigger and call level.
-- **Testing reality**: There is no formal automated test suite. `test_judge.py` and `test_transcript_judge.py` are judge smoke scripts, while `scratch/test_supabase.py` is a manual connectivity probe.
-- **Transcript corrections** (Stage 4.1): Never rewrites dialogue — applies label-only corrections via deterministic string replacement using temp placeholders to avoid double-replacement during global SDR↔PROSPECT swaps. Verdicts logged to `logs/transcript_judge_feedback.jsonl`.
-- **BANTIC judge model** (Stage 5.5): Uses GLM-4.7 via NVIDIA API (`integrate.api.nvidia.com`); requires `NVIDIA_API_KEY` env var
-- **Non-overcritical judge**: Stage 5.5 only revises scores if clearly wrong (evidence doesn't support it, topic never discussed but scored >0, or off by 2+ points). Full feedback logged to `logs/judge_feedback.jsonl`.
+- **Testing reality**: There is no formal automated test suite. `scratch/test_supabase.py` is a manual connectivity probe.
 - **Supabase tables**: `calls` (transcript/analysis cache, legacy), `companies` (FK compatibility only), `contacts`, `ae_handoff_runs` (run lifecycle), `ae_handoff_run_calls` (per-call audit within a run).
 - **Stage 4 is Spyne-specific**: The `LABEL_SPEAKERS_PROMPT` in `stages/clean_transcript.py` explicitly names "Spyne" and "vehicle photography or AI merchandising". This must be updated if the pipeline is adapted for a different company or product.
-- **Error handling conventions**: All Supabase operations return `bool` or empty collections on failure — never raise. All LLM calls (`gpt-4o-mini`, `gpt-4o`, GLM-4.7) return `None` on failure. The one exception: `lib/hubspot_client.get_call_company_id()` raises `HubSpotAssociationLookupError` after all retries are exhausted (callers must handle this separately from the "no company" case which returns `None`).
+- **Error handling conventions**: All Supabase operations return `bool` or empty collections on failure — never raise. All LLM calls (`gpt-4o-mini`, `gpt-4o`) return `None` on failure. The one exception: `lib/hubspot_client.get_call_company_id()` raises `HubSpotAssociationLookupError` after all retries are exhausted (callers must handle this separately from the "no company" case which returns `None`).
 - **`is_dm` is never persisted**: `lib/supabase_client.upsert_contact()` silently drops the `is_dm` field — it is not included in the upsert payload. DM status identified by Stage 4.5 lives only in the in-memory `journey.dm_contact` object during the run and is not stored to the database.
 - **Disposition mapping is process-lifetime cached**: `lib/hubspot_client._DISPOSITION_MAPPING` is fetched once and never refreshed. If HubSpot disposition IDs change, the orchestrator must be restarted.
+- **Judges retired (2026-07-16)**: former Stages 4.1 (transcript judge) and 5.5 (BANTIC final judge) used GLM-4.7 via NVIDIA API and were removed after NVIDIA end-of-lifed the model on 2026-05-14. Historical verdicts remain in `logs/judge_feedback.jsonl` and `logs/transcript_judge_feedback.jsonl`.
 
 ## Outputs
 
@@ -122,7 +113,5 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - `dashboards/<Company>_dashboard.html` — Standalone warm-theme HTML dashboard (self-contained; auto-created relative to project root).
 - HubSpot company property `ae_handoff_brief` — brief text written back to HubSpot via `update_company_property()` for non-INDIVIDUAL runs.
 - `logs/orchestrator.log` — Structured log output.
-- `logs/judge_feedback.jsonl` — Per-run BANTIC judge verdicts (original vs final scores, thinking snippet, reasons for revision).
-- `logs/transcript_judge_feedback.jsonl` — Per-run transcript judge verdicts (corrections applied, thinking snippet).
 
 **Related docs**: `AGENTS.md` is an equivalent guidance file for OpenAI Codex; keep it in sync when making structural changes. See `ARCHITECTURE.md` for per-stage cost, error handling, and design rationale.

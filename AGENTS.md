@@ -12,10 +12,10 @@ A Python 3 multi-agent pipeline that automatically generates Account Executive h
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in all 6 keys
+cp .env.example .env   # fill in all 5 keys
 ```
 
-Required env vars (see `.env.example`): `HUBSPOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `NVIDIA_API_KEY`.
+Required env vars (see `.env.example`): `HUBSPOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`.
 
 ## Running
 
@@ -35,7 +35,7 @@ Scratch utilities (not part of the pipeline):
 - `scratch/debug_fetch.py` — inspect Stage 2 fetch output
 - `scratch/reset_flags.py` — reset `ae_brief_sent = False` to re-process rows
 
-## Pipeline Architecture (9 Stages)
+## Pipeline Architecture (8 Stages)
 
 Each stage is a module in `stages/`. They execute sequentially per company; Stage 5 (BANTIC scoring) runs calls in parallel via `ThreadPoolExecutor`.
 
@@ -45,10 +45,8 @@ Each stage is a module in `stages/`. They execute sequentially per company; Stag
 | 2 | `stages/fetch_agent.py` | Fetches company/contact/call data from HubSpot; narrows analysis calls to `C - Meeting Scheduled`, `C - Callback High Intent`, `C - Callback Low Intent`, `C - Gave a Referral`, and `Connected`; merges in stored transcript/analysis state from Supabase |
 | 3 | `stages/transcription.py` | Submits recording URL to Deepgram Nova-3 (synchronous STT + diarization via REST API) |
 | 4 | `stages/clean_transcript.py` | gpt-4o-mini relabels Speaker 0/1 → `[SDR]`/`[PROSPECT]`/`[VOICEMAIL/IVR]`/`[RECEPTIONIST]` |
-| 4.1 | `stages/transcript_judge.py` | GLM-4.7 with thinking verifies speaker labels are correct; catches global swaps ([SDR]↔[PROSPECT]) and individual turn mismatches; logs verdict + corrections to `logs/transcript_judge_feedback.jsonl` |
 | 4.5 | `stages/dm_discovery.py` | gpt-4o-mini analyzes cleaned transcripts to identify the actual decision-maker; fuzzy substring-matches back to contacts list; falls back to `contacts[0]` |
 | 5 | `stages/bantic_analysis.py` | gpt-4o-mini scores 6 BANTIC dimensions per call in parallel (0–3 each) via `ThreadPoolExecutor(max_workers=10)` |
-| 5.5 | `stages/final_judge.py` | GLM-4.7 with thinking reviews BANTIC scores for accuracy; revises only clearly wrong scores; logs verdict + changes to `logs/judge_feedback.jsonl` |
 | 6 | `stages/score_module.py` | Pure Python weighted score — no LLM (avoids hallucination in math) |
 | 7 | `stages/ae_brief_agent.py` | gpt-4o writes Markdown brief; `lib/html_generator.py` builds HTML dashboard |
 
@@ -63,7 +61,7 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **Supabase is storage**: Supabase is used for transcript reuse, analysis state, idempotency, and `ae_handoff_runs` / `ae_handoff_run_calls` persistence.
 - **Best score wins**: Stage 6 takes the highest per-dimension score across all calls for a company, not the average.
 - **Score formula** (Stage 6, `score_module.py`): `(B×5 + A×20 + N×25 + T×15 + I×15 + CP×20) / 30`. Tier mapping: ≥8.1 = "Very High Intent", 8.0 = "High Intent", 5.0–7.9 = "Qualified", <5.0 = "Disqualified".
-- **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stages 4.1 and 5.5 use GLM-4.7 via NVIDIA API (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
+- **Models**: Stages 4, 4.5, and 5 use `gpt-4o-mini` (temperature=0); Stage 7 uses `gpt-4o` (temperature=0).
 - **PID lockfile**: orchestrator writes `/tmp/ae_handoff_orchestrator.lock` on startup to prevent duplicate instances.
 - **Watcher time window**: Stage 1 searches HubSpot calls with `hs_timestamp >= last watcher timestamp`; if there is no watcher state yet, it falls back to the start of yesterday.
 - **Allowed analysis call set**: Stage 2 only includes `Meeting Scheduled`, `Callback High Intent`, `Callback Low Intent`, `Gave a Referral`, and `Connected` calls, and only up to the trigger call date.
@@ -71,15 +69,9 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **DM confidence gating**: Stage 4.5 only updates `dm_contact` if confidence is `"high"` or `"medium"`; low-confidence results fall back to `contacts[0]`.
 - **Contact persistence is not runtime-critical**: the pipeline uses HubSpot contacts in memory during the run; the old Supabase `contacts` table is not the runtime source of truth.
 - **BANTIC analysis status**: Stage 5 writes `analysis_status = "completed"`; Supabase rejects `"complete"` via `calls_analysis_status_check`.
-- **NVIDIA judge timeouts**: Stages 4.1 and 5.5 set 90-second request timeouts; judge failures should log and allow the pipeline to continue where possible.
 - **Run tracking**: the orchestrator creates one `ae_handoff_runs` row per trigger and one `ae_handoff_run_calls` row per in-scope call, then updates them through each stage.
-- **Testing reality**: There is no formal automated test suite. `test_judge.py` and `test_transcript_judge.py` are judge smoke scripts, while `scratch/test_supabase.py` is a manual connectivity probe.
-- **Transcript judge** (Stage 4.1): Uses GLM-4.7 via NVIDIA API to verify speaker labels ([SDR]/[PROSPECT]) are correct; catches global swaps and individual turn mismatches
-- **Transcript corrections applied programmatically**: Stage 4.1 never rewrites dialogue content — only corrects labels via deterministic string replacement (prevents hallucination)
-- **Transcript judge log**: verdict, corrections applied, thinking snippet appended to `logs/transcript_judge_feedback.jsonl` per call
-- **BANTIC judge model** (Stage 5.5): Uses GLM-4.7 via NVIDIA API (`integrate.api.nvidia.com`); requires `NVIDIA_API_KEY` env var
-- **Non-overcritical judge**: Stage 5.5 only revises scores if clearly wrong (evidence doesn't support it, topic never discussed but scored >0, or off by 2+ points)
-- **BANTIC judge log**: full feedback (thinking, original vs final scores, change reasons) appended to `logs/judge_feedback.jsonl` per call run
+- **Testing reality**: There is no formal automated test suite. `scratch/test_supabase.py` is a manual connectivity probe.
+- **Judges retired (2026-07-16)**: former Stages 4.1/5.5 (GLM-4.7 via NVIDIA) were removed after NVIDIA end-of-lifed the model on 2026-05-14; historical verdicts remain in `logs/judge_feedback.jsonl` and `logs/transcript_judge_feedback.jsonl`.
 
 ## Outputs
 

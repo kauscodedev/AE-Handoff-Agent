@@ -199,8 +199,6 @@ def generate_bantic_snapshot(calls_with_scores: List[Tuple[Call, BANTICScore]], 
                 "impact": score_obj.impact_evidence,
                 "current_process": score_obj.current_process_evidence,
             },
-            "final_judge_verdict": getattr(call, "final_judge_verdict", None),
-            "final_judge_feedback": getattr(call, "final_judge_feedback", None),
         })
 
     return {
