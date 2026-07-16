@@ -555,6 +555,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AE Handoff Brief Agent Orchestrator")
     parser.add_argument("--once", action="store_true", help="Run one iteration only")
     parser.add_argument("--interval", type=int, default=60, help="Check interval in seconds (default: 60)")
+    parser.add_argument("--lookback-hours", type=int, default=48, help="Discovery lookback window in hours for --once (default: 48; widen for backfill)")
 
     args = parser.parse_args()
 
@@ -566,11 +567,12 @@ if __name__ == "__main__":
         try:
             ledger = RunLedgerAgent()
             coordinator = CoordinatorAgent(
-                discovery=TriggerDiscoveryAgent(ledger=ledger, lookback_hours=48, limit=500),
+                discovery=TriggerDiscoveryAgent(ledger=ledger, lookback_hours=args.lookback_hours, limit=500),
                 ledger=ledger,
                 pipeline=HandoffPipelineAgent(process_trigger=process_company),
                 pause_between_triggers_seconds=1,
             )
+            logger.info(f"One-shot discovery lookback window: {args.lookback_hours}h")
             result = coordinator.run_once()
             logger.info(f"Coordinator result: {result.message}")
         except Exception as e:
