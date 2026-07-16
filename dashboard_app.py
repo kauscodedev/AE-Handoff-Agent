@@ -49,7 +49,7 @@ def get_orchestrator_status():
 
 def parse_orchestrator_logs():
     """Parse orchestrator logs to extract current state"""
-    log_file = Path("/Users/kaustubhchauhan/ae-handoff-brief-agent/logs/orchestrator.log")
+    log_file = Path(__file__).resolve().parent / "logs" / "orchestrator.log"
 
     if not log_file.exists():
         return {
@@ -152,7 +152,7 @@ def api_status():
 @app.route('/api/logs/tail')
 def api_logs_tail():
     """Get last N lines of orchestrator log"""
-    log_file = Path("/Users/kaustubhchauhan/ae-handoff-brief-agent/logs/orchestrator.log")
+    log_file = Path(__file__).resolve().parent / "logs" / "orchestrator.log"
 
     if not log_file.exists():
         return jsonify({"lines": []})

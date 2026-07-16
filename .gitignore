@@ -27,3 +27,6 @@ dashboards/
 # Local lock/runtime files
 *.log
 *.pid
+
+# Ownership transfer runbook — contains internal account details; repo is public
+TRANSFER.md

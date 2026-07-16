@@ -17,6 +17,8 @@ cp .env.example .env   # fill in all 6 keys
 
 Required env vars (see `.env.example`): `HUBSPOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `NVIDIA_API_KEY`.
 
+Optional env vars: `HUBSPOT_ASSOCIATION_RETRIES` (default: 3, controls HubSpot retry count), `AE_HANDOFF_STALE_RUN_MINUTES` (default: 45, controls when an active run is reclaimed as stale).
+
 ## Running
 
 ```bash
@@ -108,14 +110,19 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 - **Transcript corrections** (Stage 4.1): Never rewrites dialogue — applies label-only corrections via deterministic string replacement using temp placeholders to avoid double-replacement during global SDR↔PROSPECT swaps. Verdicts logged to `logs/transcript_judge_feedback.jsonl`.
 - **BANTIC judge model** (Stage 5.5): Uses GLM-4.7 via NVIDIA API (`integrate.api.nvidia.com`); requires `NVIDIA_API_KEY` env var
 - **Non-overcritical judge**: Stage 5.5 only revises scores if clearly wrong (evidence doesn't support it, topic never discussed but scored >0, or off by 2+ points). Full feedback logged to `logs/judge_feedback.jsonl`.
+- **Supabase tables**: `calls` (transcript/analysis cache, legacy), `companies` (FK compatibility only), `contacts`, `ae_handoff_runs` (run lifecycle), `ae_handoff_run_calls` (per-call audit within a run).
+- **Stage 4 is Spyne-specific**: The `LABEL_SPEAKERS_PROMPT` in `stages/clean_transcript.py` explicitly names "Spyne" and "vehicle photography or AI merchandising". This must be updated if the pipeline is adapted for a different company or product.
+- **Error handling conventions**: All Supabase operations return `bool` or empty collections on failure — never raise. All LLM calls (`gpt-4o-mini`, `gpt-4o`, GLM-4.7) return `None` on failure. The one exception: `lib/hubspot_client.get_call_company_id()` raises `HubSpotAssociationLookupError` after all retries are exhausted (callers must handle this separately from the "no company" case which returns `None`).
+- **`is_dm` is never persisted**: `lib/supabase_client.upsert_contact()` silently drops the `is_dm` field — it is not included in the upsert payload. DM status identified by Stage 4.5 lives only in the in-memory `journey.dm_contact` object during the run and is not stored to the database.
+- **Disposition mapping is process-lifetime cached**: `lib/hubspot_client._DISPOSITION_MAPPING` is fetched once and never refreshed. If HubSpot disposition IDs change, the orchestrator must be restarted.
 
 ## Outputs
 
-- `handoffs/<Company>_handoff.md` — Markdown brief (5 sections: ICP Fit, Current Process, Evaluating Tools, Pain/Need, Next Steps). Note: Path is hardcoded to `/Users/kaustubhchauhan/ae-handoff-brief-agent/handoffs/` in `ae_brief_agent.py`.
+- `handoffs/<Company>_handoff.md` — Markdown brief (5 sections: ICP Fit, Current Process, Evaluating Tools, Pain/Need, Next Steps). Path resolves relative to the project root (anchored to `ae_brief_agent.py`'s location), so it works on any machine.
 - `dashboards/<Company>_dashboard.html` — Standalone warm-theme HTML dashboard (self-contained; auto-created relative to project root).
 - HubSpot company property `ae_handoff_brief` — brief text written back to HubSpot via `update_company_property()` for non-INDIVIDUAL runs.
 - `logs/orchestrator.log` — Structured log output.
 - `logs/judge_feedback.jsonl` — Per-run BANTIC judge verdicts (original vs final scores, thinking snippet, reasons for revision).
 - `logs/transcript_judge_feedback.jsonl` — Per-run transcript judge verdicts (corrections applied, thinking snippet).
 
-See `ARCHITECTURE.md` for per-stage cost, error handling, and design rationale.
+**Related docs**: `AGENTS.md` is an equivalent guidance file for OpenAI Codex; keep it in sync when making structural changes. See `ARCHITECTURE.md` for per-stage cost, error handling, and design rationale.

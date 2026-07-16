@@ -83,7 +83,7 @@ Shared infrastructure lives in `lib/`: `types.py` (plain Python classes), `supab
 
 ## Outputs
 
-- `handoffs/<Company>_handoff.md` — Markdown brief (5 sections: ICP Fit, Current Process, Evaluating Tools, Pain/Need, Next Steps). Note: Path is hardcoded to `/Users/kaustubhchauhan/ae-handoff-brief-agent/handoffs/` in `ae_brief_agent.py`.
+- `handoffs/<Company>_handoff.md` — Markdown brief (5 sections: ICP Fit, Current Process, Evaluating Tools, Pain/Need, Next Steps). Path resolves relative to the project root (anchored to `ae_brief_agent.py`'s location), so it works on any machine.
 - `dashboards/<Company>_dashboard.html` — Standalone dark-theme HTML dashboard (self-contained; auto-created relative to project root).
 - `logs/orchestrator.log` — Structured log output.
 - `ae_handoff_runs` / `ae_handoff_run_calls` — Supabase run tracking tables for trigger-level and call-level pipeline state.

@@ -183,7 +183,9 @@ def save_brief(
 
         # Sanitize company name for filename
         safe_name = company_name.replace("/", "_").replace(" ", "_")
-        filename = f"/Users/kaustubhchauhan/ae-handoff-brief-agent/handoffs/{safe_name}_handoff.md"
+        handoffs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "handoffs")
+        os.makedirs(handoffs_dir, exist_ok=True)
+        filename = os.path.join(handoffs_dir, f"{safe_name}_handoff.md")
 
         with open(filename, "w") as f:
             f.write(markdown_content)
